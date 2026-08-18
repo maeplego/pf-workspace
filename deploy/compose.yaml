@@ -1,0 +1,52 @@
+services:
+  workspace-api:
+    build:
+      context: ../apps/api
+      dockerfile: Dockerfile
+    environment:
+      WORKSPACE_HTTP_PORT: "8096"
+      WORKSPACE_DEV_AUTH: ${WORKSPACE_DEV_AUTH:-true}
+      WORKSPACE_CORS_ORIGIN: ${WORKSPACE_CORS_ORIGIN:-http://localhost:3006}
+      WORKSPACE_INTERNAL_TOKEN: ${WORKSPACE_INTERNAL_TOKEN:-dev-collab-internal}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_INTERNAL_BASE: ${OIDC_INTERNAL_BASE:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+    ports:
+      - "8096:8096"
+
+  workspace-collab:
+    build:
+      context: ../apps/collab
+      dockerfile: Dockerfile
+    environment:
+      COLLAB_PORT: "8097"
+      COLLAB_API_URL: ${COLLAB_API_URL:-http://workspace-api:8096}
+      COLLAB_INTERNAL_TOKEN: ${WORKSPACE_INTERNAL_TOKEN:-dev-collab-internal}
+    ports:
+      - "8097:8097"
+    depends_on:
+      - workspace-api
+
+  workspace-web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_COLLAB_WS_URL: ${NEXT_PUBLIC_COLLAB_WS_URL:-ws://localhost:8097}
+        NEXT_PUBLIC_CHAT_WS_URL: ${NEXT_PUBLIC_CHAT_WS_URL:-ws://localhost:8096/chat/ws}
+    environment:
+      WORKSPACE_API_URL: ${WORKSPACE_API_URL:-http://workspace-api:8096}
+      NEXT_PUBLIC_COLLAB_WS_URL: ${NEXT_PUBLIC_COLLAB_WS_URL:-ws://localhost:8097}
+      NEXT_PUBLIC_CHAT_WS_URL: ${NEXT_PUBLIC_CHAT_WS_URL:-ws://localhost:8096/chat/ws}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_INTERNAL_BASE: ${OIDC_INTERNAL_BASE:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      OIDC_POST_LOGOUT_REDIRECT_URI: ${OIDC_POST_LOGOUT_REDIRECT_URI:-}
+    extra_hosts:
+      - "localhost:host-gateway"
+    ports:
+      - "3006:3006"
+    depends_on:
+      - workspace-api
+      - workspace-collab

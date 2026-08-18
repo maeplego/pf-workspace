@@ -1,0 +1,732 @@
+package memory
+
+import (
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/portfolio/pf-workspace/api/internal/domain"
+	"github.com/portfolio/pf-workspace/api/internal/id"
+)
+
+type Store struct {
+	mu          sync.RWMutex
+	workspaces  map[string]domain.Workspace
+	members     map[string]map[string]domain.Member // workspaceID -> sub -> member
+	boards      map[string]domain.Board
+	columns     map[string]domain.Column
+	cards       map[string]domain.Card
+	boardCols   map[string][]string // boardID -> column IDs ordered
+	columnCards map[string][]string // columnID -> card IDs ordered
+	pages       map[string]domain.Page
+	documents   map[string]domain.Document
+	tickets     map[string]domain.CollabTicket
+	collabIndex map[string]collabRef
+	channels    map[string]domain.Channel
+	messages    map[string][]domain.ChatMessage // channelID -> ordered
+	chatTickets map[string]domain.ChatTicket
+}
+
+type collabRef struct {
+	kind string // "page" | "document"
+	id   string
+}
+
+func New() *Store {
+	return &Store{
+		workspaces:  make(map[string]domain.Workspace),
+		members:     make(map[string]map[string]domain.Member),
+		boards:      make(map[string]domain.Board),
+		columns:     make(map[string]domain.Column),
+		cards:       make(map[string]domain.Card),
+		boardCols:   make(map[string][]string),
+		columnCards: make(map[string][]string),
+		pages:       make(map[string]domain.Page),
+		documents:   make(map[string]domain.Document),
+		tickets:     make(map[string]domain.CollabTicket),
+		collabIndex: make(map[string]collabRef),
+		channels:    make(map[string]domain.Channel),
+		messages:    make(map[string][]domain.ChatMessage),
+		chatTickets: make(map[string]domain.ChatTicket),
+	}
+}
+
+func (s *Store) CreateWorkspace(name, ownerSub string, now time.Time) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ws := domain.Workspace{
+		ID:        id.New(),
+		Name:      name,
+		CreatedAt: now,
+	}
+	s.workspaces[ws.ID] = ws
+	if s.members[ws.ID] == nil {
+		s.members[ws.ID] = make(map[string]domain.Member)
+	}
+	s.members[ws.ID][ownerSub] = domain.Member{
+		WorkspaceID: ws.ID,
+		Sub:         ownerSub,
+		Role:        domain.RoleOwner,
+		JoinedAt:    now,
+	}
+	return ws, nil
+}
+
+func (s *Store) ListWorkspacesForSub(sub string) []domain.Workspace {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []domain.Workspace
+	for wsID, members := range s.members {
+		if _, ok := members[sub]; ok {
+			if ws, ok := s.workspaces[wsID]; ok {
+				out = append(out, ws)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
+}
+
+func (s *Store) GetWorkspace(wsID string) (domain.Workspace, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ws, ok := s.workspaces[wsID]
+	if !ok {
+		return domain.Workspace{}, domain.ErrNotFound
+	}
+	return ws, nil
+}
+
+func (s *Store) MemberRole(wsID, sub string) (domain.Role, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	members, ok := s.members[wsID]
+	if !ok {
+		return "", domain.ErrNotFound
+	}
+	m, ok := members[sub]
+	if !ok {
+		return "", domain.ErrForbidden
+	}
+	return m.Role, nil
+}
+
+func (s *Store) ListMembers(wsID string) ([]domain.Member, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	members, ok := s.members[wsID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	out := make([]domain.Member, 0, len(members))
+	for _, m := range members {
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].JoinedAt.Before(out[j].JoinedAt) })
+	return out, nil
+}
+
+func (s *Store) AddMember(wsID, sub string, role domain.Role, now time.Time) (domain.Member, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	members, ok := s.members[wsID]
+	if !ok {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	if _, exists := members[sub]; exists {
+		return domain.Member{}, domain.ErrConflict
+	}
+	m := domain.Member{WorkspaceID: wsID, Sub: sub, Role: role, JoinedAt: now}
+	members[sub] = m
+	return m, nil
+}
+
+func (s *Store) CreateBoard(wsID, name string, now time.Time) (domain.Board, []domain.Column, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return domain.Board{}, nil, domain.ErrNotFound
+	}
+	board := domain.Board{
+		ID:          id.New(),
+		WorkspaceID: wsID,
+		Name:        name,
+		CreatedAt:   now,
+	}
+	s.boards[board.ID] = board
+	defaultNames := []string{"To Do", "In Progress", "Done"}
+	cols := make([]domain.Column, 0, len(defaultNames))
+	colIDs := make([]string, 0, len(defaultNames))
+	for i, n := range defaultNames {
+		col := domain.Column{
+			ID:        id.New(),
+			BoardID:   board.ID,
+			Name:      n,
+			Position:  i,
+			CreatedAt: now,
+		}
+		s.columns[col.ID] = col
+		colIDs = append(colIDs, col.ID)
+		s.columnCards[col.ID] = []string{}
+		cols = append(cols, col)
+	}
+	s.boardCols[board.ID] = colIDs
+	return board, cols, nil
+}
+
+func (s *Store) ListBoards(wsID string) ([]domain.Board, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	var out []domain.Board
+	for _, b := range s.boards {
+		if b.WorkspaceID == wsID {
+			out = append(out, b)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *Store) GetBoardDetail(boardID string) (domain.BoardDetail, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	board, ok := s.boards[boardID]
+	if !ok {
+		return domain.BoardDetail{}, domain.ErrNotFound
+	}
+	colIDs := s.boardCols[boardID]
+	cols := make([]domain.ColumnWithCards, 0, len(colIDs))
+	for _, colID := range colIDs {
+		col := s.columns[colID]
+		cardIDs := s.columnCards[colID]
+		cards := make([]domain.Card, 0, len(cardIDs))
+		for _, cardID := range cardIDs {
+			cards = append(cards, s.cards[cardID])
+		}
+		cols = append(cols, domain.ColumnWithCards{Column: col, Cards: cards})
+	}
+	return domain.BoardDetail{Board: board, Columns: cols}, nil
+}
+
+func (s *Store) BoardWorkspaceID(boardID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, ok := s.boards[boardID]
+	if !ok {
+		return "", domain.ErrNotFound
+	}
+	return b.WorkspaceID, nil
+}
+
+func (s *Store) ColumnBoardID(columnID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	col, ok := s.columns[columnID]
+	if !ok {
+		return "", domain.ErrNotFound
+	}
+	return col.BoardID, nil
+}
+
+func (s *Store) CreateCard(columnID, title, description string, now time.Time) (domain.Card, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	col, ok := s.columns[columnID]
+	if !ok {
+		return domain.Card{}, domain.ErrNotFound
+	}
+	board, ok := s.boards[col.BoardID]
+	if !ok {
+		return domain.Card{}, domain.ErrNotFound
+	}
+	pos := len(s.columnCards[columnID])
+	card := domain.Card{
+		ID:          id.New(),
+		ColumnID:    columnID,
+		BoardID:     board.ID,
+		Title:       title,
+		Description: description,
+		Position:    pos,
+		Version:     1,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	s.cards[card.ID] = card
+	s.columnCards[columnID] = append(s.columnCards[columnID], card.ID)
+	return card, nil
+}
+
+func (s *Store) GetCard(cardID string) (domain.Card, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.cards[cardID]
+	if !ok {
+		return domain.Card{}, domain.ErrNotFound
+	}
+	return c, nil
+}
+
+func (s *Store) CardWorkspaceID(cardID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.cards[cardID]
+	if !ok {
+		return "", domain.ErrNotFound
+	}
+	b, ok := s.boards[c.BoardID]
+	if !ok {
+		return "", domain.ErrNotFound
+	}
+	return b.WorkspaceID, nil
+}
+
+func (s *Store) UpdateCard(cardID, title, description string, version int, now time.Time) (domain.Card, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.cards[cardID]
+	if !ok {
+		return domain.Card{}, domain.ErrNotFound
+	}
+	if c.Version != version {
+		return c, domain.ErrConflict
+	}
+	if title != "" {
+		c.Title = title
+	}
+	c.Description = description
+	c.Version++
+	c.UpdatedAt = now
+	s.cards[cardID] = c
+	return c, nil
+}
+
+func (s *Store) MoveCard(cardID, targetColumnID string, position int, version int, now time.Time) (domain.Card, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.cards[cardID]
+	if !ok {
+		return domain.Card{}, domain.ErrNotFound
+	}
+	if c.Version != version {
+		return c, domain.ErrConflict
+	}
+	targetCol, ok := s.columns[targetColumnID]
+	if !ok {
+		return domain.Card{}, domain.ErrNotFound
+	}
+	if targetCol.BoardID != c.BoardID {
+		return domain.Card{}, domain.ErrForbidden
+	}
+
+	oldColumnID := c.ColumnID
+	oldIDs := s.columnCards[oldColumnID]
+	newOld := make([]string, 0, len(oldIDs)-1)
+	for _, id := range oldIDs {
+		if id != cardID {
+			newOld = append(newOld, id)
+		}
+	}
+	s.columnCards[oldColumnID] = newOld
+	s.reindexColumnLocked(oldColumnID)
+
+	targetIDs := append([]string(nil), s.columnCards[targetColumnID]...)
+	if position < 0 {
+		position = 0
+	}
+	if position > len(targetIDs) {
+		position = len(targetIDs)
+	}
+	targetIDs = append(targetIDs[:position], append([]string{cardID}, targetIDs[position:]...)...)
+	s.columnCards[targetColumnID] = targetIDs
+	s.reindexColumnLocked(targetColumnID)
+
+	c.ColumnID = targetColumnID
+	c.Position = position
+	c.Version++
+	c.UpdatedAt = now
+	s.cards[cardID] = c
+	return c, nil
+}
+
+func (s *Store) reindexColumnLocked(columnID string) {
+	for i, cardID := range s.columnCards[columnID] {
+		c := s.cards[cardID]
+		c.Position = i
+		s.cards[cardID] = c
+	}
+}
+
+func (s *Store) CreatePage(wsID, parentID, title, body, status string, now time.Time) (domain.Page, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return domain.Page{}, domain.ErrNotFound
+	}
+	if err := s.validateParentLocked("", wsID, parentID); err != nil {
+		return domain.Page{}, err
+	}
+	pos := 0
+	for _, p := range s.pages {
+		if p.WorkspaceID == wsID && p.ParentID == parentID && p.Position >= pos {
+			pos = p.Position + 1
+		}
+	}
+	page := domain.Page{
+		ID:               id.New(),
+		WorkspaceID:      wsID,
+		ParentID:         parentID,
+		Title:            title,
+		Body:             body,
+		Status:           status,
+		Position:         pos,
+		Version:          1,
+		CollabDocumentID: id.New(),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	s.pages[page.ID] = page
+	s.collabIndex[page.CollabDocumentID] = collabRef{kind: "page", id: page.ID}
+	return page, nil
+}
+
+func (s *Store) GetPage(pageID string) (domain.Page, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.pages[pageID]
+	if !ok {
+		return domain.Page{}, domain.ErrNotFound
+	}
+	return p, nil
+}
+
+func (s *Store) ListPages(wsID string) ([]domain.Page, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	var out []domain.Page
+	for _, p := range s.pages {
+		if p.WorkspaceID == wsID {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) PageWorkspaceID(pageID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.pages[pageID]
+	if !ok {
+		return "", domain.ErrNotFound
+	}
+	return p.WorkspaceID, nil
+}
+
+func (s *Store) UpdatePage(pageID string, title, body, status, parentID *string, version int, now time.Time) (domain.Page, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pages[pageID]
+	if !ok {
+		return domain.Page{}, domain.ErrNotFound
+	}
+	if p.Version != version {
+		return p, domain.ErrConflict
+	}
+	if parentID != nil {
+		if err := s.validateParentLocked(pageID, p.WorkspaceID, *parentID); err != nil {
+			return domain.Page{}, err
+		}
+		p.ParentID = *parentID
+	}
+	if title != nil {
+		p.Title = *title
+	}
+	if body != nil {
+		p.Body = *body
+	}
+	if status != nil {
+		p.Status = *status
+	}
+	p.Version++
+	p.UpdatedAt = now
+	s.pages[pageID] = p
+	return p, nil
+}
+
+func (s *Store) validateParentLocked(pageID, wsID, parentID string) error {
+	if parentID == "" {
+		return nil
+	}
+	if parentID == pageID {
+		return domain.ErrInvalid
+	}
+	par, ok := s.pages[parentID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if par.WorkspaceID != wsID {
+		return domain.ErrInvalid
+	}
+	cur := par.ParentID
+	seen := map[string]bool{parentID: true}
+	for cur != "" {
+		if cur == pageID {
+			return domain.ErrInvalid
+		}
+		if seen[cur] {
+			return domain.ErrInvalid
+		}
+		seen[cur] = true
+		next, ok := s.pages[cur]
+		if !ok {
+			break
+		}
+		cur = next.ParentID
+	}
+	return nil
+}
+
+func (s *Store) CreateDocument(wsID, title, body string, now time.Time) (domain.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return domain.Document{}, domain.ErrNotFound
+	}
+	doc := domain.Document{
+		ID:               id.New(),
+		WorkspaceID:      wsID,
+		Title:            title,
+		Body:             body,
+		CollabDocumentID: id.New(),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	s.documents[doc.ID] = doc
+	s.collabIndex[doc.CollabDocumentID] = collabRef{kind: "document", id: doc.ID}
+	return doc, nil
+}
+
+func (s *Store) ListDocuments(wsID string) ([]domain.Document, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	var out []domain.Document
+	for _, d := range s.documents {
+		if d.WorkspaceID == wsID {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (s *Store) GetDocument(docID string) (domain.Document, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	d, ok := s.documents[docID]
+	if !ok {
+		return domain.Document{}, domain.ErrNotFound
+	}
+	return d, nil
+}
+
+func (s *Store) UpdateDocumentTitle(docID, title string, now time.Time) (domain.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.documents[docID]
+	if !ok {
+		return domain.Document{}, domain.ErrNotFound
+	}
+	d.Title = title
+	d.UpdatedAt = now
+	s.documents[docID] = d
+	return d, nil
+}
+
+func (s *Store) LookupCollab(collabDocumentID string) (kind, id string, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ref, ok := s.collabIndex[collabDocumentID]
+	if !ok {
+		return "", "", domain.ErrNotFound
+	}
+	return ref.kind, ref.id, nil
+}
+
+func (s *Store) CreateTicket(sub, collabDocumentID string, readOnly bool, now time.Time) domain.CollabTicket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := domain.CollabTicket{
+		ID:               id.New(),
+		Sub:              sub,
+		CollabDocumentID: collabDocumentID,
+		ReadOnly:         readOnly,
+		ExpiresAt:        now.Add(domain.CollabTicketTTL),
+	}
+	s.tickets[t.ID] = t
+	return t
+}
+
+func (s *Store) GetTicket(ticketID string) (domain.CollabTicket, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	t, ok := s.tickets[ticketID]
+	if !ok {
+		return domain.CollabTicket{}, domain.ErrNotFound
+	}
+	return t, nil
+}
+
+func (s *Store) ApplyCollabSnapshot(collabDocumentID, plaintext string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ref, ok := s.collabIndex[collabDocumentID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	switch ref.kind {
+	case "page":
+		p, ok := s.pages[ref.id]
+		if !ok {
+			return domain.ErrNotFound
+		}
+		p.Body = plaintext
+		p.UpdatedAt = now
+		s.pages[ref.id] = p
+	case "document":
+		d, ok := s.documents[ref.id]
+		if !ok {
+			return domain.ErrNotFound
+		}
+		d.Body = plaintext
+		d.UpdatedAt = now
+		s.documents[ref.id] = d
+	default:
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CreateChannel(wsID, name string, now time.Time) (domain.Channel, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return domain.Channel{}, domain.ErrNotFound
+	}
+	ch := domain.Channel{
+		ID:          id.New(),
+		WorkspaceID: wsID,
+		Name:        name,
+		CreatedAt:   now,
+	}
+	s.channels[ch.ID] = ch
+	s.messages[ch.ID] = nil
+	return ch, nil
+}
+
+func (s *Store) ListChannels(wsID string) ([]domain.Channel, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	var out []domain.Channel
+	for _, ch := range s.channels {
+		if ch.WorkspaceID == wsID {
+			out = append(out, ch)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (s *Store) GetChannel(channelID string) (domain.Channel, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ch, ok := s.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrNotFound
+	}
+	return ch, nil
+}
+
+func (s *Store) AppendMessage(channelID, sub, body string, now time.Time) (domain.ChatMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.channels[channelID]; !ok {
+		return domain.ChatMessage{}, domain.ErrNotFound
+	}
+	seq := len(s.messages[channelID]) + 1
+	msg := domain.ChatMessage{
+		ID:        id.New(),
+		ChannelID: channelID,
+		Sub:       sub,
+		Body:      body,
+		Seq:       seq,
+		CreatedAt: now,
+	}
+	s.messages[channelID] = append(s.messages[channelID], msg)
+	return msg, nil
+}
+
+func (s *Store) ListMessages(channelID string, afterSeq int) ([]domain.ChatMessage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.channels[channelID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	all := s.messages[channelID]
+	if afterSeq <= 0 {
+		out := make([]domain.ChatMessage, len(all))
+		copy(out, all)
+		return out, nil
+	}
+	var out []domain.ChatMessage
+	for _, m := range all {
+		if m.Seq > afterSeq {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) CreateChatTicket(sub, channelID string, readOnly bool, now time.Time) domain.ChatTicket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := domain.ChatTicket{
+		ID:        id.New(),
+		Sub:       sub,
+		ChannelID: channelID,
+		ReadOnly:  readOnly,
+		ExpiresAt: now.Add(domain.CollabTicketTTL),
+	}
+	s.chatTickets[t.ID] = t
+	return t
+}
+
+func (s *Store) GetChatTicket(ticketID string) (domain.ChatTicket, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	t, ok := s.chatTickets[ticketID]
+	if !ok {
+		return domain.ChatTicket{}, domain.ErrNotFound
+	}
+	return t, nil
+}

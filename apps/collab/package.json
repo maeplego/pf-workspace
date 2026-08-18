@@ -1,0 +1,15 @@
+{
+  "name": "@pf-workspace/collab",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test src/room.test.mjs"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^2.15.2",
+    "ws": "^8.18.0",
+    "yjs": "^13.6.24"
+  }
+}
