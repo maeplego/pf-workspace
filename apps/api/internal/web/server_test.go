@@ -3,8 +3,12 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/portfolio/pf-workspace/api/internal/auth"
@@ -712,4 +716,430 @@ func TestChatHistoryAndSeq(t *testing.T) {
 	if !gt.ReadOnly {
 		t.Fatal("guest chat ticket should be read-only")
 	}
+}
+
+func TestSearchACLAndTypes(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Search"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/members", map[string]string{"sub": "guest-1", "role": "guest"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/pages", map[string]any{
+		"title": "Secret Draft", "body": "hidden pineapple", "status": "draft",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var draft struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&draft); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/pages", map[string]any{
+		"title": "Public Root", "body": "visible banana", "status": "published",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pub struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&pub); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/pages", map[string]any{
+		"title": "Child of draft", "body": "published under draft pineapple", "parentId": draft.ID, "status": "published",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/boards", map[string]string{"name": "Board"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var board struct {
+		ID      string `json:"id"`
+		Columns []struct {
+			ID string `json:"id"`
+		} `json:"columns"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&board); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/columns/"+board.Columns[0].ID+"/cards", map[string]string{
+		"title": "Card pineapple", "description": "desc",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/channels", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chs struct {
+		Channels []struct {
+			ID string `json:"id"`
+		} `json:"channels"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&chs); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/channels/"+chs.Channels[0].ID+"/messages", map[string]string{
+		"body": "chat about pineapple",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	ownerHits := searchHits(t, client, ts.URL+"/v1/workspaces/"+ws.ID+"/search?q=pineapple", "owner-1")
+	if !hasType(ownerHits, "page") || !hasType(ownerHits, "card") || !hasType(ownerHits, "message") {
+		t.Fatalf("owner hits %+v", ownerHits)
+	}
+	foundDraft := false
+	for _, h := range ownerHits {
+		if h.Type == "page" && h.ID == draft.ID {
+			foundDraft = true
+		}
+	}
+	if !foundDraft {
+		t.Fatal("owner should hit draft page")
+	}
+
+	guestHits := searchHits(t, client, ts.URL+"/v1/workspaces/"+ws.ID+"/search?q=pineapple", "guest-1")
+	for _, h := range guestHits {
+		if h.Type == "page" && (h.ID == draft.ID || strings.Contains(strings.ToLower(h.Title), "child")) {
+			t.Fatalf("guest should not see draft or draft-descendant: %+v", h)
+		}
+	}
+	if !hasType(guestHits, "card") || !hasType(guestHits, "message") {
+		t.Fatalf("guest should still see card and message: %+v", guestHits)
+	}
+
+	pubHits := searchHits(t, client, ts.URL+"/v1/workspaces/"+ws.ID+"/search?q=banana", "guest-1")
+	if len(pubHits) != 1 || pubHits[0].Type != "page" || pubHits[0].ID != pub.ID {
+		t.Fatalf("guest public %+v", pubHits)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/search?q=", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty q: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/search?q=x", nil, "stranger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-member: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+}
+
+func TestMentionsOnPost(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Mentions"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/members", map[string]string{"sub": "demo-user-b", "role": "member"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/channels", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chs struct {
+		Channels []struct {
+			ID string `json:"id"`
+		} `json:"channels"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&chs); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/channels/"+chs.Channels[0].ID+"/messages", map[string]string{
+		"body": "hi @demo-user-b and @not-a-member",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("post: %d", res.StatusCode)
+	}
+	var msg struct {
+		Mentions []string `json:"mentions"`
+		Seq      int      `json:"seq"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&msg); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if msg.Seq != 1 || len(msg.Mentions) != 1 || msg.Mentions[0] != "demo-user-b" {
+		t.Fatalf("mentions %+v", msg)
+	}
+}
+
+func TestAttachmentsLocalAndGuestForbidden(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Files"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/members", map[string]string{"sub": "guest-1", "role": "guest"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/pages", map[string]any{
+		"title": "Img", "body": "see below", "status": "published",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	wikiFile := uploadFile(t, client, ts.URL, ws.ID, "wiki", "owner-1", "pic.png", "image/png", []byte("png-bytes"))
+	guestUpload := uploadFileRaw(t, client, ts.URL, ws.ID, "wiki", "guest-1", "no.png", "image/png", []byte("x"))
+	if guestUpload.StatusCode != http.StatusForbidden {
+		t.Fatalf("guest upload: %d", guestUpload.StatusCode)
+	}
+	_ = guestUpload.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/pages/"+page.ID+"/attachments", map[string]string{"fileId": wikiFile.ID}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("attach: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/pages/"+page.ID+"/attachments", map[string]string{"fileId": wikiFile.ID}, "guest-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("guest attach: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	contentURL := fileContentURL(t, ts.URL, wikiFile.URL)
+	content, err := client.Get(contentURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content.StatusCode != http.StatusOK {
+		t.Fatalf("content: %d", content.StatusCode)
+	}
+	got, _ := io.ReadAll(content.Body)
+	_ = content.Body.Close()
+	if string(got) != "png-bytes" {
+		t.Fatalf("bytes %q", got)
+	}
+
+	bad, err := client.Get(strings.Split(contentURL, "?")[0] + "?t=nope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bad.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad token: %d", bad.StatusCode)
+	}
+	_ = bad.Body.Close()
+
+	chatFile := uploadFile(t, client, ts.URL, ws.ID, "chat", "owner-1", "shot.png", "image/png", []byte("chat-img"))
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/channels", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chs struct {
+		Channels []struct {
+			ID string `json:"id"`
+		} `json:"channels"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&chs); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/channels/"+chs.Channels[0].ID+"/messages", map[string]string{
+		"body": "with file", "attachmentFileId": chatFile.ID,
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("chat attach: %d", res.StatusCode)
+	}
+	var posted struct {
+		AttachmentFileID string `json:"attachmentFileId"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&posted); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if posted.AttachmentFileID != chatFile.ID {
+		t.Fatalf("posted %+v", posted)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/uploads/link", map[string]any{
+		"workspaceId": ws.ID, "purpose": "wiki", "fileId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("link without p03: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+}
+
+type searchHit struct {
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+func searchHits(t *testing.T, client *http.Client, url, sub string) []searchHit {
+	t.Helper()
+	res, err := client.Do(authReq(t, http.MethodGet, url, nil, sub))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("search %s: %d", sub, res.StatusCode)
+	}
+	var out struct {
+		Hits []searchHit `json:"hits"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Hits
+}
+
+func hasType(hits []searchHit, typ string) bool {
+	for _, h := range hits {
+		if h.Type == typ {
+			return true
+		}
+	}
+	return false
+}
+
+func fileContentURL(t *testing.T, base, advertised string) string {
+	t.Helper()
+	u, err := url.Parse(advertised)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base + u.RequestURI()
+}
+
+type uploadedFile struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+func uploadFile(t *testing.T, client *http.Client, base, wsID, purpose, sub, name, ctype string, data []byte) uploadedFile {
+	t.Helper()
+	res := uploadFileRaw(t, client, base, wsID, purpose, sub, name, ctype, data)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("upload %s: %d", purpose, res.StatusCode)
+	}
+	var f uploadedFile
+	if err := json.NewDecoder(res.Body).Decode(&f); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func uploadFileRaw(t *testing.T, client *http.Client, base, wsID, purpose, sub, name, ctype string, data []byte) *http.Response {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("workspaceId", wsID)
+	_ = w.WriteField("purpose", purpose)
+	part, err := w.CreateFormFile("file", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	req, err := http.NewRequest(http.MethodPost, base+"/v1/uploads", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Dev-User-Sub", sub)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
 }

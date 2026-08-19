@@ -25,6 +25,8 @@ type Store struct {
 	channels    map[string]domain.Channel
 	messages    map[string][]domain.ChatMessage // channelID -> ordered
 	chatTickets map[string]domain.ChatTicket
+	files       map[string]domain.StoredFile
+	pageFiles   map[string][]string // pageID -> fileIDs
 }
 
 type collabRef struct {
@@ -48,6 +50,8 @@ func New() *Store {
 		channels:    make(map[string]domain.Channel),
 		messages:    make(map[string][]domain.ChatMessage),
 		chatTickets: make(map[string]domain.ChatTicket),
+		files:       make(map[string]domain.StoredFile),
+		pageFiles:   make(map[string][]string),
 	}
 }
 
@@ -667,23 +671,97 @@ func (s *Store) GetChannel(channelID string) (domain.Channel, error) {
 	return ch, nil
 }
 
-func (s *Store) AppendMessage(channelID, sub, body string, now time.Time) (domain.ChatMessage, error) {
+func (s *Store) ListCardsInWorkspace(wsID string) ([]domain.Card, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	var out []domain.Card
+	for _, c := range s.cards {
+		b, ok := s.boards[c.BoardID]
+		if ok && b.WorkspaceID == wsID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) AppendMessage(channelID, sub, body string, mentions []string, attachmentFileID string, now time.Time) (domain.ChatMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.channels[channelID]; !ok {
 		return domain.ChatMessage{}, domain.ErrNotFound
 	}
+	copied := make([]string, len(mentions))
+	copy(copied, mentions)
 	seq := len(s.messages[channelID]) + 1
 	msg := domain.ChatMessage{
-		ID:        id.New(),
-		ChannelID: channelID,
-		Sub:       sub,
-		Body:      body,
-		Seq:       seq,
-		CreatedAt: now,
+		ID:               id.New(),
+		ChannelID:        channelID,
+		Sub:              sub,
+		Body:             body,
+		Mentions:         copied,
+		AttachmentFileID: attachmentFileID,
+		Seq:              seq,
+		CreatedAt:        now,
 	}
 	s.messages[channelID] = append(s.messages[channelID], msg)
 	return msg, nil
+}
+
+func (s *Store) SaveFile(f domain.StoredFile) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workspaces[f.WorkspaceID]; !ok {
+		return domain.ErrNotFound
+	}
+	s.files[f.ID] = f
+	return nil
+}
+
+func (s *Store) GetFile(fileID string) (domain.StoredFile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	f, ok := s.files[fileID]
+	if !ok {
+		return domain.StoredFile{}, domain.ErrNotFound
+	}
+	return f, nil
+}
+
+func (s *Store) AttachPageFile(pageID, fileID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.pages[pageID]; !ok {
+		return domain.ErrNotFound
+	}
+	if _, ok := s.files[fileID]; !ok {
+		return domain.ErrNotFound
+	}
+	for _, existing := range s.pageFiles[pageID] {
+		if existing == fileID {
+			return nil
+		}
+	}
+	s.pageFiles[pageID] = append(s.pageFiles[pageID], fileID)
+	return nil
+}
+
+func (s *Store) ListPageFiles(pageID string) ([]domain.StoredFile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.pages[pageID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	ids := s.pageFiles[pageID]
+	out := make([]domain.StoredFile, 0, len(ids))
+	for _, fid := range ids {
+		if f, ok := s.files[fid]; ok {
+			out = append(out, f)
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) ListMessages(channelID string, afterSeq int) ([]domain.ChatMessage, error) {

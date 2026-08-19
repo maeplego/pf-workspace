@@ -22,6 +22,11 @@ func main() {
 	}
 	store := memory.New()
 	svc := service.New(store)
+	svc.SetFileOpts(service.FileOpts{
+		PublicURL:   cfg.PublicURL,
+		MediaAPIURL: cfg.MediaAPIURL,
+		UploadDir:   cfg.UploadDir,
+	})
 	mw := auth.New(cfg.DevAuth, cfg.OIDCIssuer, cfg.OIDCInternalBase, cfg.OIDCAudience)
 	handler := web.New(svc, cfg.CORSOrigin, cfg.InternalToken, nil).Routes(mw)
 

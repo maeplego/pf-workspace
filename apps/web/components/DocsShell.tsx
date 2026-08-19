@@ -48,6 +48,8 @@ export async function DocsShell({
           <Link href={`/wiki/${workspaceId}${q}`}>Wiki</Link>
           {" · "}
           <Link href={`/chat/${workspaceId}${q}`}>Chat</Link>
+          {" · "}
+          <Link href={`/search/${workspaceId}${q}`}>検索</Link>
         </p>
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {(documents || []).map((d) => (

@@ -2,6 +2,8 @@ package service
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,14 +15,37 @@ type Broadcaster interface {
 	Broadcast(channelID string, payload []byte)
 }
 
+type FileOpts struct {
+	PublicURL   string
+	MediaAPIURL string
+	UploadDir   string
+}
+
 type Service struct {
-	store *memory.Store
-	now   func() time.Time
-	bus   Broadcaster
+	store     *memory.Store
+	now       func() time.Time
+	bus       Broadcaster
+	publicURL string
+	mediaURL  string
+	uploadDir string
 }
 
 func New(store *memory.Store) *Service {
-	return &Service{store: store, now: time.Now}
+	s := &Service{store: store, now: time.Now}
+	s.SetFileOpts(FileOpts{})
+	return s
+}
+
+func (s *Service) SetFileOpts(o FileOpts) {
+	if strings.TrimSpace(o.PublicURL) == "" {
+		o.PublicURL = "http://localhost:8096"
+	}
+	if strings.TrimSpace(o.UploadDir) == "" {
+		o.UploadDir = filepath.Join(os.TempDir(), "pf-workspace-uploads")
+	}
+	s.publicURL = strings.TrimRight(o.PublicURL, "/")
+	s.mediaURL = strings.TrimRight(strings.TrimSpace(o.MediaAPIURL), "/")
+	s.uploadDir = o.UploadDir
 }
 
 func (s *Service) SetBroadcaster(bus Broadcaster) {
@@ -452,7 +477,7 @@ func (s *Service) GetChannel(sub, channelID string) (domain.Channel, error) {
 	return ch, nil
 }
 
-func (s *Service) PostMessage(sub, channelID, body string) (domain.ChatMessage, error) {
+func (s *Service) PostMessage(sub, channelID, body, attachmentFileID string) (domain.ChatMessage, error) {
 	ch, err := s.store.GetChannel(channelID)
 	if err != nil {
 		return domain.ChatMessage{}, err
@@ -461,10 +486,28 @@ func (s *Service) PostMessage(sub, channelID, body string) (domain.ChatMessage, 
 		return domain.ChatMessage{}, err
 	}
 	body = strings.TrimSpace(body)
-	if body == "" || len(body) > domain.MaxChatMessage {
+	attachmentFileID = strings.TrimSpace(attachmentFileID)
+	if body == "" && attachmentFileID == "" {
 		return domain.ChatMessage{}, domain.ErrInvalid
 	}
-	msg, err := s.store.AppendMessage(channelID, sub, body, s.now().UTC())
+	if len(body) > domain.MaxChatMessage {
+		return domain.ChatMessage{}, domain.ErrInvalid
+	}
+	if attachmentFileID != "" {
+		if err := s.requireChatFile(ch.WorkspaceID, attachmentFileID); err != nil {
+			return domain.ChatMessage{}, err
+		}
+	}
+	members, err := s.store.ListMembers(ch.WorkspaceID)
+	if err != nil {
+		return domain.ChatMessage{}, err
+	}
+	subs := make([]string, 0, len(members))
+	for _, m := range members {
+		subs = append(subs, m.Sub)
+	}
+	mentions := domain.ExtractMentions(body, subs)
+	msg, err := s.store.AppendMessage(channelID, sub, body, mentions, attachmentFileID, s.now().UTC())
 	if err != nil {
 		return domain.ChatMessage{}, err
 	}

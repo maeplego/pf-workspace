@@ -34,11 +34,13 @@ export default async function ChatChannelPage({
   return (
     <ChatShell workspaceId={workspaceId} currentId={channelId} sessionSub={session!.sub} devUser={devUser}>
       <ChatRoom
+        workspaceId={workspaceId}
         channelId={channelId}
         initial={messages || []}
         ticket={ticket.ticket}
         wsBase={wsBase}
         userSub={session!.sub}
+        members={members}
         readOnly={!!readOnly || ticket.readOnly}
         devUser={devUser}
       />

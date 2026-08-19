@@ -171,12 +171,135 @@ export async function createChannel(workspaceId: string, formData: FormData, dev
   return ch.id as string;
 }
 
-export async function postMessage(channelId: string, body: string, devUser?: string) {
+export async function postMessage(channelId: string, body: string, attachmentFileId?: string, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
+  const payload: Record<string, unknown> = { body };
+  if (attachmentFileId) payload.attachmentFileId = attachmentFileId;
   return apiFetch(`/v1/channels/${channelId}/messages`, session, {
     method: "POST",
-    body: JSON.stringify({ body }),
-  }) as Promise<{ id: string; channelId: string; sub: string; body: string; seq: number; createdAt: string }>;
+    body: JSON.stringify(payload),
+  }) as Promise<{
+    id: string;
+    channelId: string;
+    sub: string;
+    body: string;
+    mentions: string[];
+    attachmentFileId?: string;
+    seq: number;
+    createdAt: string;
+  }>;
+}
+
+type FileView = {
+  id: string;
+  url: string;
+  name: string;
+  contentType: string;
+  purpose: string;
+};
+
+async function apiSend(path: string, session: WorkspaceSession, init?: RequestInit) {
+  const headers: Record<string, string> = { ...authHeaders(session) };
+  const extra = (init?.headers || {}) as Record<string, string>;
+  Object.assign(headers, extra);
+  const res = await fetch(`${API}${path}`, {
+    ...init,
+    headers,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
+}
+
+async function mediaJSON(base: string, path: string, session: WorkspaceSession, init: RequestInit) {
+  const res = await fetch(`${base}${path}`, {
+    ...init,
+    headers: { ...authHeaders(session), "Content-Type": "application/json", ...(init.headers || {}) },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error((await res.text()) || res.statusText);
+  return res.json();
+}
+
+export async function uploadWorkspaceFile(
+  workspaceId: string,
+  purpose: "wiki" | "chat",
+  formData: FormData,
+  devUser?: string,
+): Promise<FileView> {
+  const session = await requireWorkspaceSession(devUser);
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    throw new Error("ファイルを選んでください");
+  }
+  const cfg = (await apiFetch("/v1/uploads/config", session)) as {
+    provider: string;
+    maxBytes: number;
+    mediaApiUrl?: string;
+  };
+  if (file.size > (cfg.maxBytes || 20 * 1024 * 1024)) {
+    throw new Error("ファイルが大きすぎます（20MBまで）");
+  }
+  if (cfg.provider === "p03" && cfg.mediaApiUrl) {
+    return uploadViaMedia(session, cfg.mediaApiUrl, workspaceId, purpose, file);
+  }
+  const body = new FormData();
+  body.set("workspaceId", workspaceId);
+  body.set("purpose", purpose);
+  body.set("file", file);
+  return apiSend("/v1/uploads", session, { method: "POST", body }) as Promise<FileView>;
+}
+
+async function uploadViaMedia(
+  session: WorkspaceSession,
+  mediaBase: string,
+  workspaceId: string,
+  purpose: "wiki" | "chat",
+  file: File,
+): Promise<FileView> {
+  const presign = await mediaJSON(mediaBase, "/v1/uploads/presign", session, {
+    method: "POST",
+    body: JSON.stringify({
+      contentType: file.type || "image/png",
+      size: file.size,
+      purpose,
+    }),
+  });
+  const put = await fetch(presign.uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "image/png" },
+    body: Buffer.from(await file.arrayBuffer()),
+  });
+  if (!put.ok) {
+    throw new Error(`object upload failed (${put.status})`);
+  }
+  await mediaJSON(mediaBase, "/v1/uploads/complete", session, {
+    method: "POST",
+    body: JSON.stringify({ fileId: presign.fileId, etag: put.headers.get("etag") || "" }),
+  });
+  return apiFetch("/v1/uploads/link", session, {
+    method: "POST",
+    body: JSON.stringify({
+      workspaceId,
+      purpose,
+      fileId: presign.fileId,
+      name: file.name,
+      contentType: file.type || "image/png",
+      size: file.size,
+    }),
+  }) as Promise<FileView>;
+}
+
+export async function attachPageFile(pageId: string, fileId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  return apiFetch(`/v1/pages/${pageId}/attachments`, session, {
+    method: "POST",
+    body: JSON.stringify({ fileId }),
+  }) as Promise<FileView>;
 }
 
 export async function issueChatTicket(channelId: string, devUser?: string) {

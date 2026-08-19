@@ -15,6 +15,9 @@ type Config struct {
 	OIDCAudience     string
 	CORSOrigin       string
 	InternalToken    string
+	MediaAPIURL      string
+	PublicURL        string
+	UploadDir        string
 }
 
 func FromEnv() (Config, error) {
@@ -31,6 +34,9 @@ func FromEnv() (Config, error) {
 		OIDCAudience:     strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),
 		CORSOrigin:       strings.TrimSpace(os.Getenv("WORKSPACE_CORS_ORIGIN")),
 		InternalToken:    strings.TrimSpace(os.Getenv("WORKSPACE_INTERNAL_TOKEN")),
+		MediaAPIURL:      strings.TrimSpace(os.Getenv("MEDIA_API_URL")),
+		PublicURL:        strings.TrimSpace(os.Getenv("WORKSPACE_PUBLIC_URL")),
+		UploadDir:        strings.TrimSpace(os.Getenv("WORKSPACE_UPLOAD_DIR")),
 	}
 	if cfg.CORSOrigin == "" {
 		cfg.CORSOrigin = "http://localhost:3006"

@@ -41,6 +41,7 @@ func (s *Server) Routes(mw *auth.Middleware) http.Handler {
 
 	api := mw.Handler(http.HandlerFunc(s.handleAPI))
 	mux.Handle("/v1/", api)
+	mux.HandleFunc("GET /v1/files/{id}/content", s.serveFileContent)
 	mux.HandleFunc("GET /chat/ws", s.chatWS)
 	mux.HandleFunc("POST /internal/v1/collab/authorize", s.internalAuthorize)
 	mux.HandleFunc("POST /internal/v1/collab/plaintext", s.internalPlaintext)
@@ -70,6 +71,21 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/search"):
+		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/search")
+		s.search(w, r, u.Sub, wsID)
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/uploads/config":
+		s.uploadConfig(w)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads":
+		s.uploadLocal(w, r, u.Sub)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads/link":
+		s.linkRemote(w, r, u.Sub)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.HasSuffix(r.URL.Path, "/attachments"):
+		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/attachments")
+		s.attachPage(w, r, u.Sub, pageID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.HasSuffix(r.URL.Path, "/attachments"):
+		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/attachments")
+		s.listPageAttachments(w, u.Sub, pageID)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/workspaces":
 		s.createWorkspace(w, r, u.Sub)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces":
@@ -121,6 +137,13 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.NotFound(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/files/"):
+		fileID := strings.TrimPrefix(r.URL.Path, "/v1/files/")
+		if fileID == "" || strings.Contains(fileID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		s.getFileMeta(w, u.Sub, fileID)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/pages/"):
 		pageID := strings.TrimPrefix(r.URL.Path, "/v1/pages/")
 		s.getPage(w, u.Sub, pageID)
@@ -161,6 +184,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, domain.ErrTooLarge):
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": map[string]string{"code": "too_large", "message": "file too large"}})
 	case errors.Is(err, domain.ErrInvalid):
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid"}})
 	case errors.Is(err, domain.ErrUnauthorized):
@@ -580,13 +605,14 @@ func (s *Server) listChannels(w http.ResponseWriter, sub, wsID string) {
 
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, sub, channelID string) {
 	var body struct {
-		Body string `json:"body"`
+		Body             string `json:"body"`
+		AttachmentFileID string `json:"attachmentFileId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
 		return
 	}
-	msg, err := s.svc.PostMessage(sub, channelID, body.Body)
+	msg, err := s.svc.PostMessage(sub, channelID, body.Body, strings.TrimSpace(body.AttachmentFileID))
 	if err != nil {
 		writeErr(w, err)
 		return

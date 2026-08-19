@@ -49,6 +49,10 @@ export async function WikiShell({
           <Link href={devUser ? `/chat/${workspaceId}?user=${encodeURIComponent(devUser)}` : `/chat/${workspaceId}`}>
             Chat
           </Link>
+          {" · "}
+          <Link href={devUser ? `/search/${workspaceId}?user=${encodeURIComponent(devUser)}` : `/search/${workspaceId}`}>
+            検索
+          </Link>
         </p>
         <WikiTree nodes={tree || []} workspaceId={workspaceId} currentId={currentId} devUser={devUser} />
         {canEdit ? (

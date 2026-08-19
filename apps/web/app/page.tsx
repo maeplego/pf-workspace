@@ -99,7 +99,14 @@ export default async function HomePage({
               <Link href={devUser ? `/docs/${ws.id}?user=${devUser}` : `/docs/${ws.id}`}>Docs</Link>
               {" · "}
               <Link href={devUser ? `/chat/${ws.id}?user=${devUser}` : `/chat/${ws.id}`}>Chat</Link>
+              {" · "}
+              <Link href={devUser ? `/search/${ws.id}?user=${devUser}` : `/search/${ws.id}`}>検索</Link>
             </p>
+            <form action={devUser ? `/search/${ws.id}` : `/search/${ws.id}`} method="get" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+              {devUser ? <input type="hidden" name="user" value={devUser} /> : null}
+              <input name="q" placeholder="横断検索" required style={{ flex: 1, padding: "0.5rem" }} />
+              <button type="submit">検索</button>
+            </form>
             <ul style={{ paddingLeft: "1.2rem" }}>
               {(boardsByWs[ws.id] || []).map((b) => (
                 <li key={b.id}>

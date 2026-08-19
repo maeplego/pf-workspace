@@ -6,6 +6,7 @@ import { useCallback, useState, useTransition } from "react";
 
 import { updatePage } from "../app/actions";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { WikiAttach } from "./WikiAttach";
 
 const CollabMarkdownEditor = dynamic(() => import("./CollabMarkdownEditor").then((m) => m.CollabMarkdownEditor), {
   ssr: false,
@@ -80,6 +81,7 @@ export function WikiEditor({
   return (
     <div>
       {error ? <p style={{ color: "#bf2600" }}>{error}</p> : null}
+      <WikiAttach workspaceId={workspaceId} pageId={pageId} readOnly={readOnly} devUser={devUser} />
       {!readOnly ? (
         <>
           <label style={{ display: "block", marginBottom: "0.5rem" }}>

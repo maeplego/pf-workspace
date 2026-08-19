@@ -71,7 +71,14 @@ const (
 	MaxChannelName      = 80
 	MaxChatMessage      = 4000
 	DefaultChannelName  = "general"
+	MaxUploadBytes      = 20 * 1024 * 1024
+	PurposeWiki         = "wiki"
+	PurposeChat         = "chat"
+	FileProviderLocal   = "local"
+	FileProviderP03     = "p03"
 )
+
+var DefaultSearchTypes = []string{"page", "document", "card", "message"}
 
 type Channel struct {
 	ID          string    `json:"id"`
@@ -81,12 +88,36 @@ type Channel struct {
 }
 
 type ChatMessage struct {
-	ID        string    `json:"id"`
-	ChannelID string    `json:"channelId"`
-	Sub       string    `json:"sub"`
-	Body      string    `json:"body"`
-	Seq       int       `json:"seq"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID               string    `json:"id"`
+	ChannelID        string    `json:"channelId"`
+	Sub              string    `json:"sub"`
+	Body             string    `json:"body"`
+	Mentions         []string  `json:"mentions"`
+	AttachmentFileID string    `json:"attachmentFileId,omitempty"`
+	Seq              int       `json:"seq"`
+	CreatedAt        time.Time `json:"createdAt"`
+}
+
+type SearchHit struct {
+	Type      string            `json:"type"`
+	ID        string            `json:"id"`
+	Title     string            `json:"title"`
+	Snippet   string            `json:"snippet"`
+	HrefHints map[string]string `json:"hrefHints"`
+}
+
+type StoredFile struct {
+	ID          string    `json:"id"`
+	WorkspaceID string    `json:"workspaceId"`
+	UploaderSub string    `json:"uploaderSub"`
+	Purpose     string    `json:"purpose"`
+	Provider    string    `json:"provider"`
+	ContentType string    `json:"contentType"`
+	Size        int64     `json:"size"`
+	Name        string    `json:"name"`
+	ViewToken   string    `json:"-"`
+	Path        string    `json:"-"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 type ChatTicket struct {

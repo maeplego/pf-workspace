@@ -2,32 +2,86 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { apiFetchForPage, postMessage } from "../app/actions";
+import { apiFetchForPage, postMessage, uploadWorkspaceFile } from "../app/actions";
 
 export type ChatMsg = {
   id: string;
   sub: string;
   body: string;
+  mentions?: string[];
+  attachmentFileId?: string;
   seq: number;
   createdAt: string;
 };
 
+type Member = { sub: string; role: string };
+
 type Props = {
+  workspaceId: string;
   channelId: string;
   initial: ChatMsg[];
   ticket: string;
   wsBase: string;
   userSub: string;
+  members: Member[];
   readOnly: boolean;
   devUser?: string;
 };
 
-export function ChatRoom({ channelId, initial, ticket, wsBase, userSub, readOnly, devUser }: Props) {
+function mentionQuery(text: string): string | null {
+  const m = text.match(/@([A-Za-z0-9._-]*)$/);
+  return m ? m[1] : null;
+}
+
+function renderBody(body: string, members: Member[]) {
+  const parts = body.split(/(@[A-Za-z0-9._-]+)/g);
+  const known = new Set(members.map((m) => m.sub));
+  return parts.map((part, i) => {
+    if (part.startsWith("@") && known.has(part.slice(1))) {
+      return (
+        <span key={i} className="mention-token">
+          {part}
+        </span>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
+function AttachmentThumb({ fileId, devUser }: { fileId: string; devUser?: string }) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    apiFetchForPage(`/v1/files/${fileId}`, devUser)
+      .then((f: { url?: string }) => {
+        if (!cancelled && f.url) setUrl(f.url);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [fileId, devUser]);
+  if (!url) return null;
+  return <img src={url} alt="" style={{ maxWidth: 240, display: "block", marginTop: "0.35rem" }} />;
+}
+
+export function ChatRoom({
+  workspaceId,
+  channelId,
+  initial,
+  ticket,
+  wsBase,
+  userSub,
+  members,
+  readOnly,
+  devUser,
+}: Props) {
   const [messages, setMessages] = useState(initial);
   const [status, setStatus] = useState("connecting");
   const [typing, setTyping] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
   const lastSeq = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -117,18 +171,34 @@ export function ChatRoom({ channelId, initial, ticket, wsBase, userSub, readOnly
     }
   }
 
+  const q = mentionQuery(draft);
+  const suggestions =
+    q === null ? [] : members.filter((m) => m.sub !== userSub && m.sub.toLowerCase().startsWith(q.toLowerCase())).slice(0, 6);
+
+  function pickMention(sub: string) {
+    setDraft(draft.replace(/@([A-Za-z0-9._-]*)$/, `@${sub} `));
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const body = draft.trim();
-    if (!body || readOnly) return;
+    if (readOnly || (!body && !file)) return;
     setPending(true);
     try {
-      const msg = await postMessage(channelId, body, devUser);
+      let attachmentFileId = "";
+      if (file) {
+        const fd = new FormData();
+        fd.set("file", file);
+        const uploaded = await uploadWorkspaceFile(workspaceId, "chat", fd, devUser);
+        attachmentFileId = uploaded.id;
+      }
+      const msg = await postMessage(channelId, body, attachmentFileId || undefined, devUser);
       if (msg.seq >= lastSeq.current) {
         lastSeq.current = msg.seq;
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
       }
       setDraft("");
+      setFile(null);
     } finally {
       setPending(false);
     }
@@ -138,31 +208,54 @@ export function ChatRoom({ channelId, initial, ticket, wsBase, userSub, readOnly
     <div>
       <p className="muted">chat: {status}</p>
       <div ref={listRef} className="chat-log">
-        {messages.map((m) => (
-          <p key={m.id} style={{ margin: "0.35rem 0" }}>
-            <strong>{m.sub}</strong> <span className="muted">#{m.seq}</span>
-            <br />
-            {m.body}
-          </p>
-        ))}
+        {messages.map((m) => {
+          const mine = (m.mentions || []).includes(userSub);
+          return (
+            <p key={m.id} className={mine ? "mention-self" : undefined} style={{ margin: "0.35rem 0" }}>
+              <strong>{m.sub}</strong> <span className="muted">#{m.seq}</span>
+              <br />
+              {renderBody(m.body, members)}
+              {m.attachmentFileId ? <AttachmentThumb fileId={m.attachmentFileId} devUser={devUser} /> : null}
+            </p>
+          );
+        })}
       </div>
       {typing.length ? <p className="muted">{typing.join(", ")} が入力中…</p> : null}
       {readOnly ? (
         <p className="muted">guest は投稿できません。</p>
       ) : (
-        <form onSubmit={submit} style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+        <form onSubmit={submit} style={{ marginTop: "0.75rem" }}>
+          {suggestions.length ? (
+            <ul className="card-surface" style={{ listStyle: "none", padding: "0.35rem 0.5rem", margin: "0 0 0.35rem" }}>
+              {suggestions.map((m) => (
+                <li key={m.sub}>
+                  <button type="button" onClick={() => pickMention(m.sub)}>
+                    @{m.sub}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <input
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                sendTyping();
+              }}
+              placeholder="メッセージ（@sub でメンション）"
+              style={{ flex: 1, padding: "0.5rem" }}
+            />
+            <button type="submit" disabled={pending}>
+              送信
+            </button>
+          </div>
           <input
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              sendTyping();
-            }}
-            placeholder="メッセージ"
-            style={{ flex: 1, padding: "0.5rem" }}
+            type="file"
+            accept="image/*"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            style={{ marginTop: "0.5rem" }}
           />
-          <button type="submit" disabled={pending}>
-            送信
-          </button>
         </form>
       )}
     </div>
