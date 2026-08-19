@@ -29,6 +29,9 @@ export default async function BoardPage({
     columns: ColumnView[];
   };
   const workspace = (await apiFetchForPage(`/v1/workspaces/${board.workspaceId}`, devUser)) as { name: string };
+  const { sprints } = (await apiFetchForPage(`/v1/boards/${boardId}/sprints`, devUser)) as {
+    sprints: { id: string; name: string }[];
+  };
 
   let readOnly = false;
   try {
@@ -48,6 +51,7 @@ export default async function BoardPage({
         boardName={board.name}
         workspaceName={workspace.name}
         columns={board.columns}
+        sprints={sprints || []}
         devUser={devUser}
         readOnly={readOnly}
       />

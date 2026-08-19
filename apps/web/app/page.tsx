@@ -111,6 +111,8 @@ export default async function HomePage({
               {(boardsByWs[ws.id] || []).map((b) => (
                 <li key={b.id}>
                   <Link href={devUser ? `/boards/${b.id}?user=${devUser}` : `/boards/${b.id}`}>{b.name}</Link>
+                  {" · "}
+                  <Link href={devUser ? `/boards/${b.id}/sprints?user=${devUser}` : `/boards/${b.id}/sprints`}>スプリント</Link>
                 </li>
               ))}
             </ul>

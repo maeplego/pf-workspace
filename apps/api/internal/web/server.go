@@ -54,7 +54,7 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		if s.corsOrigin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", s.corsOrigin)
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Dev-User-Sub")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -74,6 +74,50 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/search"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/search")
 		s.search(w, r, u.Sub, wsID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/boards/") && strings.HasSuffix(r.URL.Path, "/sprints"):
+		boardID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/boards/"), "/sprints")
+		s.listSprints(w, u.Sub, boardID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/boards/") && strings.HasSuffix(r.URL.Path, "/sprints"):
+		boardID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/boards/"), "/sprints")
+		s.createSprint(w, r, u.Sub, boardID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/sprints/") && strings.HasSuffix(r.URL.Path, "/burndown"):
+		sprintID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/sprints/"), "/burndown")
+		s.sprintBurndown(w, u.Sub, sprintID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/sprints/"):
+		sprintID := strings.TrimPrefix(r.URL.Path, "/v1/sprints/")
+		if sprintID == "" || strings.Contains(sprintID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		s.getSprint(w, u.Sub, sprintID)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/sprints/"):
+		sprintID := strings.TrimPrefix(r.URL.Path, "/v1/sprints/")
+		s.updateSprint(w, r, u.Sub, sprintID)
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/sprints/"):
+		sprintID := strings.TrimPrefix(r.URL.Path, "/v1/sprints/")
+		s.deleteSprint(w, u.Sub, sprintID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.Contains(r.URL.Path, "/versions/"):
+		rest := strings.TrimPrefix(r.URL.Path, "/v1/pages/")
+		pageID, num, ok := strings.Cut(rest, "/versions/")
+		if !ok || pageID == "" || num == "" {
+			http.NotFound(w, r)
+			return
+		}
+		n, err := strconv.Atoi(num)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid version"}})
+			return
+		}
+		s.getPageVersion(w, u.Sub, pageID, n)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.HasSuffix(r.URL.Path, "/versions"):
+		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/versions")
+		s.listPageVersions(w, u.Sub, pageID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.HasSuffix(r.URL.Path, "/diff"):
+		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/diff")
+		s.diffPageVersions(w, r, u.Sub, pageID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.HasSuffix(r.URL.Path, "/restore"):
+		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/restore")
+		s.restorePageVersion(w, r, u.Sub, pageID)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/uploads/config":
 		s.uploadConfig(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads":
@@ -315,15 +359,21 @@ func (s *Server) getCard(w http.ResponseWriter, sub, cardID string) {
 
 func (s *Server) updateCard(w http.ResponseWriter, r *http.Request, sub, cardID string) {
 	var body struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Version     int    `json:"version"`
+		Title       string  `json:"title"`
+		Description string  `json:"description"`
+		Version     int     `json:"version"`
+		SprintID    *string `json:"sprintId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
 		return
 	}
-	card, err := s.svc.UpdateCard(sub, cardID, strings.TrimSpace(body.Title), body.Description, body.Version)
+	var sprintID *string
+	if body.SprintID != nil {
+		sid := strings.TrimSpace(*body.SprintID)
+		sprintID = &sid
+	}
+	card, err := s.svc.UpdateCard(sub, cardID, strings.TrimSpace(body.Title), body.Description, sprintID, body.Version)
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{"code": "conflict", "message": "version conflict"}, "current": card})

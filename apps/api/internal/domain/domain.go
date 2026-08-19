@@ -46,6 +46,8 @@ type Card struct {
 	Description string     `json:"description"`
 	Position    int        `json:"position"`
 	Version     int        `json:"version"`
+	SprintID    string     `json:"sprintId,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 	AssigneeSub string     `json:"assigneeSub,omitempty"`
 	Priority    string     `json:"priority,omitempty"`
 	DueDate     *time.Time `json:"dueDate,omitempty"`
@@ -76,7 +78,64 @@ const (
 	PurposeChat         = "chat"
 	FileProviderLocal   = "local"
 	FileProviderP03     = "p03"
+	DoneColumnName      = "Done"
+	MaxSprintName       = 80
+	MaxSprintDays       = 90
+	MaxPageVersions     = 100
 )
+
+type Sprint struct {
+	ID          string    `json:"id"`
+	BoardID     string    `json:"boardId"`
+	WorkspaceID string    `json:"workspaceId"`
+	Name        string    `json:"name"`
+	StartAt     time.Time `json:"startAt"`
+	EndAt       time.Time `json:"endAt"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type BurndownPoint struct {
+	Date      string `json:"date"`
+	Remaining int    `json:"remaining"`
+}
+
+type Burndown struct {
+	SprintID string           `json:"sprintId"`
+	Unit     string           `json:"unit"`
+	Points   []BurndownPoint  `json:"points"`
+}
+
+type PageVersion struct {
+	PageID    string    `json:"pageId"`
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body,omitempty"`
+	Sub       string    `json:"sub,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type PageVersionInfo struct {
+	PageID    string    `json:"pageId"`
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	Sub       string    `json:"sub,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type DiffLine struct {
+	Op   string `json:"op"`
+	Text string `json:"text"`
+}
+
+type PageDiff struct {
+	PageID       string     `json:"pageId"`
+	From         int        `json:"from"`
+	To           int        `json:"to"`
+	TitleChanged bool       `json:"titleChanged"`
+	FromTitle    string     `json:"fromTitle"`
+	ToTitle      string     `json:"toTitle"`
+	Lines        []DiffLine `json:"lines"`
+}
 
 var DefaultSearchTypes = []string{"page", "document", "card", "message"}
 

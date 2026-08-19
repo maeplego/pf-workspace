@@ -7,6 +7,7 @@ import { useCallback, useState, useTransition } from "react";
 import { updatePage } from "../app/actions";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { WikiAttach } from "./WikiAttach";
+import { WikiHistory } from "./WikiHistory";
 
 const CollabMarkdownEditor = dynamic(() => import("./CollabMarkdownEditor").then((m) => m.CollabMarkdownEditor), {
   ssr: false,
@@ -16,6 +17,14 @@ type Ticket = {
   ticket: string;
   collabDocumentId: string;
   readOnly: boolean;
+};
+
+type VersionInfo = {
+  pageId: string;
+  number: number;
+  title: string;
+  sub?: string;
+  createdAt: string;
 };
 
 type Props = {
@@ -31,6 +40,7 @@ type Props = {
   collabWsUrl?: string;
   userName: string;
   devUser?: string;
+  versions?: VersionInfo[];
 };
 
 export function WikiEditor({
@@ -46,6 +56,7 @@ export function WikiEditor({
   collabWsUrl,
   userName,
   devUser,
+  versions = [],
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -74,6 +85,14 @@ export function WikiEditor({
       <article>
         <h1>{title}</h1>
         <MarkdownPreview source={body} />
+        <WikiHistory
+          workspaceId={workspaceId}
+          pageId={pageId}
+          lockVersion={version}
+          readOnly
+          devUser={devUser}
+          versions={versions}
+        />
       </article>
     );
   }
@@ -130,6 +149,14 @@ export function WikiEditor({
           </button>
         </>
       )}
+      <WikiHistory
+        workspaceId={workspaceId}
+        pageId={pageId}
+        lockVersion={version}
+        readOnly={readOnly}
+        devUser={devUser}
+        versions={versions}
+      />
     </div>
   );
 }

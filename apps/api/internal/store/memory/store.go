@@ -25,8 +25,10 @@ type Store struct {
 	channels    map[string]domain.Channel
 	messages    map[string][]domain.ChatMessage // channelID -> ordered
 	chatTickets map[string]domain.ChatTicket
-	files       map[string]domain.StoredFile
-	pageFiles   map[string][]string // pageID -> fileIDs
+	files        map[string]domain.StoredFile
+	pageFiles    map[string][]string // pageID -> fileIDs
+	sprints      map[string]domain.Sprint
+	pageVersions map[string][]domain.PageVersion // pageID -> ordered
 }
 
 type collabRef struct {
@@ -50,8 +52,10 @@ func New() *Store {
 		channels:    make(map[string]domain.Channel),
 		messages:    make(map[string][]domain.ChatMessage),
 		chatTickets: make(map[string]domain.ChatTicket),
-		files:       make(map[string]domain.StoredFile),
-		pageFiles:   make(map[string][]string),
+		files:        make(map[string]domain.StoredFile),
+		pageFiles:    make(map[string][]string),
+		sprints:      make(map[string]domain.Sprint),
+		pageVersions: make(map[string][]domain.PageVersion),
 	}
 }
 
@@ -258,6 +262,10 @@ func (s *Store) CreateCard(columnID, title, description string, now time.Time) (
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	if domain.ColumnIsDone(col.Name) {
+		t := now
+		card.CompletedAt = &t
+	}
 	s.cards[card.ID] = card
 	s.columnCards[columnID] = append(s.columnCards[columnID], card.ID)
 	return card, nil
@@ -287,7 +295,7 @@ func (s *Store) CardWorkspaceID(cardID string) (string, error) {
 	return b.WorkspaceID, nil
 }
 
-func (s *Store) UpdateCard(cardID, title, description string, version int, now time.Time) (domain.Card, error) {
+func (s *Store) UpdateCard(cardID, title, description string, sprintID *string, version int, now time.Time) (domain.Card, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.cards[cardID]
@@ -301,6 +309,21 @@ func (s *Store) UpdateCard(cardID, title, description string, version int, now t
 		c.Title = title
 	}
 	c.Description = description
+	if sprintID != nil {
+		sid := *sprintID
+		if sid == "" {
+			c.SprintID = ""
+		} else {
+			sp, ok := s.sprints[sid]
+			if !ok {
+				return domain.Card{}, domain.ErrNotFound
+			}
+			if sp.BoardID != c.BoardID {
+				return domain.Card{}, domain.ErrInvalid
+			}
+			c.SprintID = sid
+		}
+	}
 	c.Version++
 	c.UpdatedAt = now
 	s.cards[cardID] = c
@@ -349,6 +372,14 @@ func (s *Store) MoveCard(cardID, targetColumnID string, position int, version in
 
 	c.ColumnID = targetColumnID
 	c.Position = position
+	if domain.ColumnIsDone(targetCol.Name) {
+		if c.CompletedAt == nil {
+			t := now
+			c.CompletedAt = &t
+		}
+	} else {
+		c.CompletedAt = nil
+	}
 	c.Version++
 	c.UpdatedAt = now
 	s.cards[cardID] = c
@@ -807,4 +838,165 @@ func (s *Store) GetChatTicket(ticketID string) (domain.ChatTicket, error) {
 		return domain.ChatTicket{}, domain.ErrNotFound
 	}
 	return t, nil
+}
+
+func (s *Store) CreateSprint(boardID, name string, startAt, endAt, now time.Time) (domain.Sprint, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	board, ok := s.boards[boardID]
+	if !ok {
+		return domain.Sprint{}, domain.ErrNotFound
+	}
+	sp := domain.Sprint{
+		ID:          id.New(),
+		BoardID:     boardID,
+		WorkspaceID: board.WorkspaceID,
+		Name:        name,
+		StartAt:     startAt.UTC(),
+		EndAt:       endAt.UTC(),
+		CreatedAt:   now,
+	}
+	s.sprints[sp.ID] = sp
+	return sp, nil
+}
+
+func (s *Store) ListSprints(boardID string) ([]domain.Sprint, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.boards[boardID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	var out []domain.Sprint
+	for _, sp := range s.sprints {
+		if sp.BoardID == boardID {
+			out = append(out, sp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartAt.Equal(out[j].StartAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].StartAt.Before(out[j].StartAt)
+	})
+	return out, nil
+}
+
+func (s *Store) GetSprint(sprintID string) (domain.Sprint, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sp, ok := s.sprints[sprintID]
+	if !ok {
+		return domain.Sprint{}, domain.ErrNotFound
+	}
+	return sp, nil
+}
+
+func (s *Store) UpdateSprint(sprintID, name string, startAt, endAt *time.Time, now time.Time) (domain.Sprint, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sp, ok := s.sprints[sprintID]
+	if !ok {
+		return domain.Sprint{}, domain.ErrNotFound
+	}
+	if name != "" {
+		sp.Name = name
+	}
+	if startAt != nil {
+		sp.StartAt = startAt.UTC()
+	}
+	if endAt != nil {
+		sp.EndAt = endAt.UTC()
+	}
+	s.sprints[sprintID] = sp
+	_ = now
+	return sp, nil
+}
+
+func (s *Store) DeleteSprint(sprintID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.sprints[sprintID]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(s.sprints, sprintID)
+	for id, c := range s.cards {
+		if c.SprintID == sprintID {
+			c.SprintID = ""
+			s.cards[id] = c
+		}
+	}
+	return nil
+}
+
+func (s *Store) ListCardsOnBoard(boardID string) ([]domain.Card, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.boards[boardID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	var out []domain.Card
+	for _, c := range s.cards {
+		if c.BoardID == boardID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) AppendPageVersionIfChanged(pageID, title, body, sub string, now time.Time) (domain.PageVersion, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.pages[pageID]; !ok {
+		return domain.PageVersion{}, false, domain.ErrNotFound
+	}
+	vers := s.pageVersions[pageID]
+	if len(vers) > 0 {
+		last := vers[len(vers)-1]
+		if last.Title == title && last.Body == body {
+			return last, false, nil
+		}
+	}
+	v := domain.PageVersion{
+		PageID:    pageID,
+		Number:    len(vers) + 1,
+		Title:     title,
+		Body:      body,
+		Sub:       sub,
+		CreatedAt: now,
+	}
+	if len(vers) > 0 {
+		v.Number = vers[len(vers)-1].Number + 1
+	}
+	vers = append(vers, v)
+	if len(vers) > domain.MaxPageVersions {
+		vers = vers[len(vers)-domain.MaxPageVersions:]
+	}
+	s.pageVersions[pageID] = vers
+	return v, true, nil
+}
+
+func (s *Store) ListPageVersions(pageID string) ([]domain.PageVersion, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.pages[pageID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	src := s.pageVersions[pageID]
+	out := make([]domain.PageVersion, len(src))
+	copy(out, src)
+	return out, nil
+}
+
+func (s *Store) GetPageVersion(pageID string, number int) (domain.PageVersion, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.pages[pageID]; !ok {
+		return domain.PageVersion{}, domain.ErrNotFound
+	}
+	for _, v := range s.pageVersions[pageID] {
+		if v.Number == number {
+			return v, nil
+		}
+	}
+	return domain.PageVersion{}, domain.ErrNotFound
 }

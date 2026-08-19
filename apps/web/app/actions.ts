@@ -316,12 +316,48 @@ export async function updateCardDetails(
   title: string,
   description: string,
   version: number,
+  sprintId: string | undefined,
   devUser?: string,
 ) {
   const session = await requireWorkspaceSession(devUser);
+  const payload: Record<string, unknown> = { title, description, version };
+  if (sprintId !== undefined) payload.sprintId = sprintId;
   await apiFetch(`/v1/cards/${cardId}`, session, {
     method: "PATCH",
-    body: JSON.stringify({ title, description, version }),
+    body: JSON.stringify(payload),
   });
   revalidatePath(`/boards/${boardId}`);
+  revalidatePath(`/boards/${boardId}/sprints`);
+}
+
+export async function createSprint(boardId: string, formData: FormData, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  const name = String(formData.get("name") || "").trim();
+  const startRaw = String(formData.get("startAt") || "");
+  const endRaw = String(formData.get("endAt") || "");
+  if (!name || !startRaw || !endRaw) return "名前と期間を入力してください";
+  const startAt = new Date(startRaw).toISOString();
+  const endAt = new Date(endRaw).toISOString();
+  await apiFetch(`/v1/boards/${boardId}/sprints`, session, {
+    method: "POST",
+    body: JSON.stringify({ name, startAt, endAt }),
+  });
+  revalidatePath(`/boards/${boardId}`);
+  revalidatePath(`/boards/${boardId}/sprints`);
+}
+
+export async function restorePageVersion(
+  workspaceId: string,
+  pageId: string,
+  number: number,
+  version: number,
+  devUser?: string,
+) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/pages/${pageId}/restore`, session, {
+    method: "POST",
+    body: JSON.stringify({ number, version }),
+  });
+  revalidatePath(`/wiki/${workspaceId}`);
+  revalidatePath(`/wiki/${workspaceId}/pages/${pageId}`);
 }

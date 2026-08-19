@@ -30,6 +30,9 @@ export default async function WikiPageView({
     version: number;
     collabDocumentId: string;
   };
+  const { versions } = (await apiFetchForPage(`/v1/pages/${pageId}/versions`, devUser)) as {
+    versions: { pageId: string; number: number; title: string; sub?: string; createdAt: string }[];
+  };
   const { members } = (await apiFetchForPage(`/v1/workspaces/${workspaceId}/members`, devUser)) as {
     members: { sub: string; role: string }[];
   };
@@ -58,6 +61,7 @@ export default async function WikiPageView({
         collabWsUrl={collabWsUrl}
         userName={session!.displayName || session!.sub}
         devUser={devUser}
+        versions={versions || []}
       />
     </WikiShell>
   );

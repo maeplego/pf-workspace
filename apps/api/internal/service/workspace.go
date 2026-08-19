@@ -179,7 +179,7 @@ func (s *Service) GetCard(sub, cardID string) (domain.Card, error) {
 	return s.store.GetCard(cardID)
 }
 
-func (s *Service) UpdateCard(sub, cardID, title, description string, version int) (domain.Card, error) {
+func (s *Service) UpdateCard(sub, cardID, title, description string, sprintID *string, version int) (domain.Card, error) {
 	wsID, err := s.store.CardWorkspaceID(cardID)
 	if err != nil {
 		return domain.Card{}, err
@@ -187,7 +187,7 @@ func (s *Service) UpdateCard(sub, cardID, title, description string, version int
 	if err := s.requireWrite(wsID, sub); err != nil {
 		return domain.Card{}, err
 	}
-	return s.store.UpdateCard(cardID, title, description, version, s.now().UTC())
+	return s.store.UpdateCard(cardID, title, description, sprintID, version, s.now().UTC())
 }
 
 func (s *Service) MoveCard(sub, cardID, columnID string, position, version int) (domain.Card, error) {
@@ -217,7 +217,12 @@ func (s *Service) CreatePage(sub, wsID, parentID, title, body, status string) (d
 	if status != domain.PageStatusDraft && status != domain.PageStatusPublished {
 		return domain.Page{}, domain.ErrInvalid
 	}
-	return s.store.CreatePage(wsID, parentID, title, body, status, s.now().UTC())
+	page, err := s.store.CreatePage(wsID, parentID, title, body, status, s.now().UTC())
+	if err != nil {
+		return domain.Page{}, err
+	}
+	_, _, _ = s.store.AppendPageVersionIfChanged(page.ID, page.Title, page.Body, sub, s.now().UTC())
+	return page, nil
 }
 
 func (s *Service) PageTree(sub, wsID string) ([]domain.PageNode, error) {
@@ -292,7 +297,14 @@ func (s *Service) UpdatePage(sub, pageID string, title, body, status *string, pa
 	if status != nil && *status != domain.PageStatusDraft && *status != domain.PageStatusPublished {
 		return domain.Page{}, domain.ErrInvalid
 	}
-	return s.store.UpdatePage(pageID, title, body, status, parentID, version, s.now().UTC())
+	page, err := s.store.UpdatePage(pageID, title, body, status, parentID, version, s.now().UTC())
+	if err != nil {
+		return page, err
+	}
+	if title != nil || body != nil {
+		_, _, _ = s.store.AppendPageVersionIfChanged(page.ID, page.Title, page.Body, sub, s.now().UTC())
+	}
+	return page, nil
 }
 
 func (s *Service) CreateDocument(sub, wsID, title, body string) (domain.Document, error) {
@@ -445,7 +457,21 @@ func (s *Service) ApplyCollabSnapshot(collabDocumentID, plaintext string) error 
 	if len(plaintext) > domain.MaxPageBody {
 		return domain.ErrInvalid
 	}
-	return s.store.ApplyCollabSnapshot(collabDocumentID, plaintext, s.now().UTC())
+	kind, targetID, err := s.store.LookupCollab(collabDocumentID)
+	if err != nil {
+		return err
+	}
+	if err := s.store.ApplyCollabSnapshot(collabDocumentID, plaintext, s.now().UTC()); err != nil {
+		return err
+	}
+	if kind == "page" {
+		p, err := s.store.GetPage(targetID)
+		if err != nil {
+			return err
+		}
+		_, _, _ = s.store.AppendPageVersionIfChanged(p.ID, p.Title, p.Body, "", s.now().UTC())
+	}
+	return nil
 }
 
 func (s *Service) CreateChannel(sub, wsID, name string) (domain.Channel, error) {

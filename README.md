@@ -1,14 +1,14 @@
 # pf-workspace
 
-P04 workspace — カンバン + Wiki + 共同編集 + チャット + 横断検索の製品リポジトリ（学習用。本番 Linear / Notion / Slack の置き換えではない）。
+P04 workspace — カンバン + Wiki + 共同編集 + チャット + 横断検索 + スプリント / Wiki 履歴の製品リポジトリ（学習用。本番 Linear / Notion / Slack の置き換えではない）。
 
 ## 構成
 
 | パス | 役割 |
 | --- | --- |
-| `apps/api` | Go API — ワークスペース、カンバン、Wiki、collab チケット、チャット、横断検索、添付（ローカルまたは P03） |
+| `apps/api` | Go API — ワークスペース、カンバン、Wiki、collab チケット、チャット、横断検索、添付（ローカルまたは P03）、スプリント、Wiki 履歴 |
 | `apps/collab` | Node + Hocuspocus — Wiki 本文と独立ドキュメントの Yjs 同期 |
-| `apps/web` | Next.js — ボード、Wiki、Docs、チャット、横断検索 |
+| `apps/web` | Next.js — ボード、Wiki、Docs、チャット、横断検索、バーンダウン |
 | `deploy/` | Compose 単体デモ |
 
 collab / chat はまだ独立 git リポジトリにしていない（DESIGN の段階化）。チャット WS は Yjs と同じソケットに乗せていない（`/chat/ws`）。
@@ -46,6 +46,14 @@ collab が落ちてもカンバンとチャットは動く。チャット WS が
 
 変換中の中間入力は Yjs に送らず、`compositionend` で確定分だけ同期する。変換中に相手が同じ箇所を編集すると稀に食い違うことがある。
 
+### スプリントとバーンダウン
+
+ボードから「スプリント」へ。期間は timestamptz（UTC）。カード詳細でスプリントに割り当てる。バーンダウンは **未完了カード数**（Done 列以外）。ストーリーポイントは持たない。現在の割り当てと Done 時刻から日次の残りを出す（移動イベントの完全ログではない）。
+
+### Wiki 履歴
+
+ページ下部で版一覧・行 diff・復元。スナップショットは API の title+body（Y.Doc バイトではない）。guest は published のみ（FilterGuestPages と同じ）。collab 接続中の復元は API 本文を戻し、開いている Y.Doc は再読込後に揃う。
+
 ## テスト
 
 ```powershell
@@ -71,6 +79,8 @@ npm run build
 - [x] 横断検索（page / document / card / message。guest は FilterGuestPages）
 - [x] メンション（`@sub` をメンバーに解決。WS に載せる。メール / 未読なし）
 - [x] 添付（P03 任意 + ローカルフォールバック。guest は追加不可）
+- [x] スプリント CRUD とカード割り当て、日次バーンダウン（cards）
+- [x] Wiki 履歴（版一覧 / 行 diff / 復元）。guest は draft 履歴なし
 
 設計: `project/portfolio-plan/workspace/DESIGN.md`  
 人間向け書類: `project/portfolio-plan/workspace/docs/`

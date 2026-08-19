@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/portfolio/pf-workspace/api/internal/auth"
 	"github.com/portfolio/pf-workspace/api/internal/service"
@@ -1142,4 +1143,310 @@ func uploadFileRaw(t *testing.T, client *http.Client, base, wsID, purpose, sub, 
 		t.Fatal(err)
 	}
 	return res
+}
+
+func TestSprintBurndownAndWikiHistory(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Sprint WS"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("ws %d", res.StatusCode)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/members", map[string]string{"sub": "guest-1", "role": "guest"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("guest %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/boards", map[string]string{"name": "Main"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var board struct {
+		ID      string `json:"id"`
+		Columns []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"columns"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&board); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	todoID := board.Columns[0].ID
+	doneID := board.Columns[2].ID
+
+	now := time.Now().UTC()
+	startAt := now.Add(-24 * time.Hour).Format(time.RFC3339)
+	endAt := now.Add(24 * time.Hour).Format(time.RFC3339)
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/boards/"+board.ID+"/sprints", map[string]string{
+		"name":    "Sprint 7",
+		"startAt": startAt,
+		"endAt":   endAt,
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("sprint create %d", res.StatusCode)
+	}
+	var sprint struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&sprint); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/boards/"+board.ID+"/sprints", map[string]string{
+		"name":    "bad",
+		"startAt": startAt,
+		"endAt":   endAt,
+	}, "guest-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("guest sprint %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	var cards []struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+	}
+	for i := 0; i < 2; i++ {
+		res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/columns/"+todoID+"/cards", map[string]string{"title": "C" + string(rune('A'+i))}, "owner-1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var c struct {
+			ID      string `json:"id"`
+			Version int    `json:"version"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&c); err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		res, err = client.Do(authReq(t, http.MethodPatch, ts.URL+"/v1/cards/"+c.ID, map[string]any{
+			"title":    "C" + string(rune('A'+i)),
+			"version":  c.Version,
+			"sprintId": sprint.ID,
+		}, "owner-1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("assign %d", res.StatusCode)
+		}
+		if err := json.NewDecoder(res.Body).Decode(&c); err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		cards = append(cards, c)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPatch, ts.URL+"/v1/cards/"+cards[0].ID+"/move", map[string]any{
+		"columnId": doneID,
+		"position": 0,
+		"version":  cards[0].Version,
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("done move %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/sprints/"+sprint.ID+"/burndown", nil, "guest-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("burndown guest %d", res.StatusCode)
+	}
+	var bd struct {
+		Unit   string `json:"unit"`
+		Points []struct {
+			Date      string `json:"date"`
+			Remaining int    `json:"remaining"`
+		} `json:"points"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&bd); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if bd.Unit != "cards" || len(bd.Points) < 2 {
+		t.Fatalf("burndown %+v", bd)
+	}
+	last := bd.Points[len(bd.Points)-2] // today is typically the middle of a 3-day window
+	today := now.Format("2006-01-02")
+	foundToday := false
+	for _, p := range bd.Points {
+		if p.Date == today {
+			foundToday = true
+			if p.Remaining != 1 {
+				t.Fatalf("today remaining %d", p.Remaining)
+			}
+		}
+	}
+	if !foundToday {
+		t.Fatalf("today %s not in points, last=%+v", today, last)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/pages", map[string]any{
+		"title":  "History",
+		"body":   "alpha",
+		"status": "published",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPatch, ts.URL+"/v1/pages/"+page.ID, map[string]any{
+		"body":    "alpha\nbeta",
+		"version": page.Version,
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/pages/"+page.ID+"/versions", nil, "guest-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("versions guest %d", res.StatusCode)
+	}
+	var vers struct {
+		Versions []struct {
+			Number int    `json:"number"`
+			Title  string `json:"title"`
+			Body   string `json:"body"`
+		} `json:"versions"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&vers); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if len(vers.Versions) != 2 {
+		t.Fatalf("versions %d", len(vers.Versions))
+	}
+	if vers.Versions[0].Body != "" {
+		t.Fatal("list should omit body")
+	}
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/pages/"+page.ID+"/diff?from=1&to=2", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("diff %d", res.StatusCode)
+	}
+	var diff struct {
+		Lines []struct {
+			Op   string `json:"op"`
+			Text string `json:"text"`
+		} `json:"lines"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&diff); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	hasInsert := false
+	for _, ln := range diff.Lines {
+		if ln.Op == "insert" && ln.Text == "beta" {
+			hasInsert = true
+		}
+	}
+	if !hasInsert {
+		t.Fatalf("diff %+v", diff.Lines)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/pages/"+page.ID+"/restore", map[string]any{
+		"number":  1,
+		"version": page.Version,
+	}, "guest-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("guest restore %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/pages/"+page.ID+"/restore", map[string]any{
+		"number":  1,
+		"version": page.Version,
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("restore %d", res.StatusCode)
+	}
+	var restored struct {
+		Body    string `json:"body"`
+		Version int    `json:"version"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&restored); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if restored.Body != "alpha" {
+		t.Fatalf("restored body %q", restored.Body)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/pages", map[string]any{
+		"title":  "Secret",
+		"body":   "hidden",
+		"status": "draft",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var draft struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&draft); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/pages/"+draft.ID+"/versions", nil, "guest-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("draft history %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
 }

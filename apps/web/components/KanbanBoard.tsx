@@ -25,6 +25,7 @@ export type CardView = {
   title: string;
   description: string;
   version: number;
+  sprintId?: string;
 };
 
 export type ColumnView = {
@@ -33,11 +34,14 @@ export type ColumnView = {
   cards: CardView[];
 };
 
+export type SprintOption = { id: string; name: string };
+
 type Props = {
   boardId: string;
   boardName: string;
   workspaceName: string;
   columns: ColumnView[];
+  sprints: SprintOption[];
   devUser?: string;
   readOnly: boolean;
 };
@@ -82,7 +86,7 @@ function SortableCard({
   );
 }
 
-export function KanbanBoard({ boardId, boardName, workspaceName, columns, devUser, readOnly }: Props) {
+export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprints, devUser, readOnly }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -162,7 +166,15 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, devUse
   function saveSelected() {
     if (!selected) return;
     startTransition(async () => {
-      await updateCardDetails(boardId, selected.id, selected.title, selected.description, selected.version, devUser);
+      await updateCardDetails(
+        boardId,
+        selected.id,
+        selected.title,
+        selected.description,
+        selected.version,
+        selected.sprintId || "",
+        devUser,
+      );
       setSelected(null);
       router.refresh();
     });
@@ -175,6 +187,8 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, devUse
       <header style={{ marginBottom: "1rem" }}>
         <p className="muted" style={{ margin: 0 }}>
           <Link href={devUser ? `/?user=${devUser}` : "/"}>{workspaceName}</Link> / {boardName}
+          {" · "}
+          <Link href={devUser ? `/boards/${boardId}/sprints?user=${devUser}` : `/boards/${boardId}/sprints`}>スプリント</Link>
           {readOnly ? " · 閲覧のみ" : null}
           {pending ? " · 保存中…" : null}
         </p>
@@ -259,6 +273,21 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, devUse
                 rows={4}
                 style={{ display: "block", width: "100%", marginTop: "0.25rem", padding: "0.5rem" }}
               />
+            </label>
+            <label style={{ display: "block", marginBottom: "0.75rem" }}>
+              スプリント
+              <select
+                value={selected.sprintId || ""}
+                onChange={(e) => setSelected({ ...selected, sprintId: e.target.value })}
+                style={{ display: "block", width: "100%", marginTop: "0.25rem", padding: "0.5rem" }}
+              >
+                <option value="">（なし）</option>
+                {sprints.map((sp) => (
+                  <option key={sp.id} value={sp.id}>
+                    {sp.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <div style={{ display: "flex", gap: "0.5rem" }}>
               <button type="button" onClick={saveSelected} disabled={pending}>
