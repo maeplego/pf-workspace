@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	HTTPAddr         string
+	DatabaseURL      string
 	DevAuth          bool
 	OIDCIssuer       string
 	OIDCInternalBase string
@@ -28,6 +29,7 @@ func FromEnv() (Config, error) {
 	devAuth := strings.EqualFold(os.Getenv("WORKSPACE_DEV_AUTH"), "true") || os.Getenv("WORKSPACE_DEV_AUTH") == "1"
 	cfg := Config{
 		HTTPAddr:         ":" + port,
+		DatabaseURL:      strings.TrimSpace(os.Getenv("WORKSPACE_DATABASE_URL")),
 		DevAuth:          devAuth,
 		OIDCIssuer:       strings.TrimSpace(os.Getenv("OIDC_ISSUER")),
 		OIDCInternalBase: strings.TrimSpace(os.Getenv("OIDC_INTERNAL_BASE")),

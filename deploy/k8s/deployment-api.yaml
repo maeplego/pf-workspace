@@ -37,6 +37,11 @@ spec:
                 secretKeyRef:
                   name: p04-secrets
                   key: WORKSPACE_INTERNAL_TOKEN
+            - name: WORKSPACE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: p04-secrets
+                  key: WORKSPACE_DATABASE_URL
             - name: OIDC_ISSUER
               value: http://idp.localhost
             - name: OIDC_INTERNAL_BASE

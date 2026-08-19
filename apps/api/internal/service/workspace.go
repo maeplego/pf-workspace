@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/portfolio/pf-workspace/api/internal/domain"
-	"github.com/portfolio/pf-workspace/api/internal/store/memory"
+	"github.com/portfolio/pf-workspace/api/internal/store"
 )
 
 type Broadcaster interface {
@@ -22,7 +22,7 @@ type FileOpts struct {
 }
 
 type Service struct {
-	store     *memory.Store
+	store     store.Store
 	now       func() time.Time
 	bus       Broadcaster
 	publicURL string
@@ -30,10 +30,14 @@ type Service struct {
 	uploadDir string
 }
 
-func New(store *memory.Store) *Service {
-	s := &Service{store: store, now: time.Now}
+func New(st store.Store) *Service {
+	s := &Service{store: st, now: time.Now}
 	s.SetFileOpts(FileOpts{})
 	return s
+}
+
+func (s *Service) Ping() error {
+	return s.store.Ping()
 }
 
 func (s *Service) SetFileOpts(o FileOpts) {

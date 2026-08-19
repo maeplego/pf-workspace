@@ -7,7 +7,10 @@ import (
 
 	"github.com/portfolio/pf-workspace/api/internal/domain"
 	"github.com/portfolio/pf-workspace/api/internal/id"
+	"github.com/portfolio/pf-workspace/api/internal/store"
 )
+
+var _ store.Store = (*Store)(nil)
 
 type Store struct {
 	mu          sync.RWMutex
@@ -35,6 +38,8 @@ type collabRef struct {
 	kind string // "page" | "document"
 	id   string
 }
+
+func (s *Store) Ping() error { return nil }
 
 func New() *Store {
 	return &Store{

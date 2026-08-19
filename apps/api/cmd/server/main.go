@@ -11,7 +11,9 @@ import (
 	"github.com/portfolio/pf-workspace/api/internal/auth"
 	"github.com/portfolio/pf-workspace/api/internal/config"
 	"github.com/portfolio/pf-workspace/api/internal/service"
+	"github.com/portfolio/pf-workspace/api/internal/store"
 	"github.com/portfolio/pf-workspace/api/internal/store/memory"
+	"github.com/portfolio/pf-workspace/api/internal/store/postgres"
 	"github.com/portfolio/pf-workspace/api/internal/web"
 )
 
@@ -20,8 +22,20 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	store := memory.New()
-	svc := service.New(store)
+	var st store.Store
+	if cfg.DatabaseURL != "" {
+		pg, err := postgres.Connect(cfg.DatabaseURL)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer pg.Close()
+		st = pg
+		log.Println("workspace api using postgres")
+	} else {
+		log.Println("WORKSPACE_DATABASE_URL is empty; using in-memory store (unit tests / fallback)")
+		st = memory.New()
+	}
+	svc := service.New(st)
 	svc.SetFileOpts(service.FileOpts{
 		PublicURL:   cfg.PublicURL,
 		MediaAPIURL: cfg.MediaAPIURL,

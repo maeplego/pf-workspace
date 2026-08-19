@@ -35,6 +35,10 @@ func (s *Server) Routes(mw *auth.Middleware) http.Handler {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, _ *http.Request) {
+		if err := s.svc.Ping(); err != nil {
+			http.Error(w, `{"ok":false}`, http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})

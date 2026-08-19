@@ -12,7 +12,9 @@ Ingress（`pf-cloud-k8s`）:
 
 ## 永続化
 
-**メモリ store。** 再起動でカンバン / Wiki / チャット / チケットは消える。platform Postgres の DB 名 `workspace` は予約済みだが、このスライスでは未接続（P10 の `talent` DB パターンへの移行は後続）。
+Compose は専用 Postgres。overlay `b-collab` は platform の DB 名 `workspace`（`ensure-platform-databases.ps1` / `init-databases.sql`）。接続文字列は `p04-secrets` の `WORKSPACE_DATABASE_URL`。単体テストはメモリ（URL 空）。
+
+Y.Doc は collab プロセスのメモリのまま。
 
 ## 認証
 
@@ -21,7 +23,7 @@ Ingress（`pf-cloud-k8s`）:
 | Compose 単体 | `WORKSPACE_DEV_AUTH`（`?user=`） | `WORKSPACE_DEV_AUTH` + `X-Dev-User-Sub` |
 | overlay | OIDC（`pf-workspace-web`）。未ログインは `/login` | overlay smoke 用に `WORKSPACE_DEV_AUTH=true`。Bearer も可 |
 
-秘密は overlay の `secretGenerator`（`p04-secrets` / `WORKSPACE_INTERNAL_TOKEN`）。製品 manifest に平文 Secret は置かない。
+秘密は overlay の `secretGenerator`（`p04-secrets` の `WORKSPACE_INTERNAL_TOKEN` と `WORKSPACE_DATABASE_URL`）。製品 manifest に平文 Secret は置かない。
 
 ## 観測
 

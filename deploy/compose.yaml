@@ -1,4 +1,20 @@
 services:
+  workspace-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: workspace
+      POSTGRES_PASSWORD: workspace
+      POSTGRES_DB: workspace
+    ports:
+      - "5439:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workspace -d workspace"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - workspace-pg:/var/lib/postgresql/data
+
   workspace-api:
     build:
       context: ../apps/api
@@ -6,6 +22,7 @@ services:
     environment:
       WORKSPACE_HTTP_PORT: "8096"
       WORKSPACE_DEV_AUTH: ${WORKSPACE_DEV_AUTH:-true}
+      WORKSPACE_DATABASE_URL: ${WORKSPACE_DATABASE_URL:-postgres://workspace:workspace@workspace-db:5432/workspace?sslmode=disable}
       WORKSPACE_CORS_ORIGIN: ${WORKSPACE_CORS_ORIGIN:-http://localhost:3006}
       WORKSPACE_INTERNAL_TOKEN: ${WORKSPACE_INTERNAL_TOKEN:-dev-collab-internal}
       WORKSPACE_PUBLIC_URL: ${WORKSPACE_PUBLIC_URL:-http://localhost:8096}
@@ -15,6 +32,9 @@ services:
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
     ports:
       - "8096:8096"
+    depends_on:
+      workspace-db:
+        condition: service_healthy
 
   workspace-collab:
     build:
@@ -52,3 +72,6 @@ services:
     depends_on:
       - workspace-api
       - workspace-collab
+
+volumes:
+  workspace-pg:

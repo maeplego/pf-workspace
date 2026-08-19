@@ -26,7 +26,7 @@ docker compose up -d --build
 - Collab: http://localhost:8097/health
 - Chat WS: `ws://localhost:8096/chat/ws`
 
-永続化は **プロセス内メモリ**。再起動で消える。platform Postgres の `workspace` DB は overlay 側で予約済みだが未接続。
+永続化は **Compose 専用 Postgres**（ホスト `localhost:5439`、DB/user `workspace`）。`WORKSPACE_DATABASE_URL` が空ならメモリ（単体テスト）。overlay `b-collab` は platform Postgres の `workspace` DB。
 
 ## 連携デモ（Kubernetes）
 
@@ -50,7 +50,7 @@ collab が落ちてもカンバンとチャットは動く。チャット WS が
 
 ### 横断検索
 
-ホームの検索欄、または `/search/{workspaceId}?q=`。guest（`?user=` で切替）では draft Wiki は出ない。照合はメモリの部分一致（Postgres FTS ではない）。
+ホームの検索欄、または `/search/{workspaceId}?q=`。guest（`?user=` で切替）では draft Wiki は出ない。照合はストア上の部分一致（Postgres FTS ではない）。
 
 ### 添付（P03 は任意）
 
@@ -95,6 +95,7 @@ npm run build
 - [x] 添付（P03 任意 + ローカルフォールバック。guest は追加不可）
 - [x] スプリント CRUD とカード割り当て、日次バーンダウン（cards）
 - [x] Wiki 履歴（版一覧 / 行 diff / 復元）。guest は draft 履歴なし
+- [x] Postgres（Compose 専用 DB。overlay B は platform `workspace`。単体テストはメモリ）
 
 設計: `project/portfolio-plan/workspace/DESIGN.md`  
 人間向け書類: `project/portfolio-plan/workspace/docs/`
