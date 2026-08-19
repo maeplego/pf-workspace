@@ -1,0 +1,9 @@
+{
+  "advisories": {
+    "GHSA-qx2v-qp2m-jg93": "Next 15 bundles postcss; jumping to Next 16 is a breaking upgrade outside this slice.",
+    "GHSA-6g55-p6wh-862q": "Same Next 15 / postcss pin as above.",
+    "GHSA-fxqj-rqcc-2cmp": "Same Next 15 / postcss pin as above.",
+    "GHSA-r28c-9q8g-f849": "Same Next 15 / postcss pin as above.",
+    "GHSA-f88m-g3jw-g9cj": "Next 15 bundles sharp <0.35; Next 16 would pull the fix and is out of scope."
+  }
+}
