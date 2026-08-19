@@ -9,7 +9,7 @@ P04 workspace — カンバン + Wiki + 共同編集 + チャット + 横断検�
 | `apps/api` | Go API — ワークスペース、カンバン、Wiki、collab チケット、チャット、横断検索、添付（ローカルまたは P03）、スプリント、Wiki 履歴 |
 | `apps/collab` | Node + Hocuspocus — Wiki 本文と独立ドキュメントの Yjs 同期 |
 | `apps/web` | Next.js — ボード、Wiki、Docs、チャット、横断検索、バーンダウン |
-| `deploy/` | Compose 単体デモ |
+| `deploy/` | Compose 単体デモ + `deploy/k8s/`（連携 overlay） |
 
 collab / chat はまだ独立 git リポジトリにしていない（DESIGN の段階化）。チャット WS は Yjs と同じソケットに乗せていない（`/chat/ws`）。
 
@@ -25,6 +25,20 @@ docker compose up -d --build
 - API: http://localhost:8096/health
 - Collab: http://localhost:8097/health
 - Chat WS: `ws://localhost:8096/chat/ws`
+
+永続化は **プロセス内メモリ**。再起動で消える。platform Postgres の `workspace` DB は overlay 側で予約済みだが未接続。
+
+## 連携デモ（Kubernetes）
+
+`pf-cloud-k8s` overlay `b-collab`（P01 + P02 + P03 + P04。P11 portal は後続）。
+
+| URL | 用途 |
+| --- | --- |
+| http://workspace.localhost | Web。OIDC 必須 |
+| http://workspace-api.localhost/health | API。チャット WS もこのホスト |
+| http://workspace-collab.localhost/health | Yjs / Hocuspocus。チャット WS とは別 |
+
+Compose は `WORKSPACE_DEV_AUTH` のまま。overlay の web は `pf-workspace-web` クライアント。手順は `project/portfolio-plan/integration-demo.md`。
 
 ### 2 ウィンドウ
 

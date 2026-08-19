@@ -19,6 +19,11 @@ export function clientId(): string {
   return v;
 }
 
+export function cookieKey(name: string): string {
+  if (!oidcEnabled()) return name;
+  return `${name}_${clientId().replace(/-/g, "_")}`;
+}
+
 export function redirectUri(): string {
   const v = process.env.OIDC_REDIRECT_URI;
   if (!v) throw new Error("OIDC_REDIRECT_URI is required");

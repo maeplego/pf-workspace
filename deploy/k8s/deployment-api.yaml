@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app: workspace-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workspace-api
+  template:
+    metadata:
+      labels:
+        app: workspace-api
+    spec:
+      containers:
+        - name: api
+          image: pf-workspace-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8096
+              name: http
+          env:
+            - name: WORKSPACE_HTTP_PORT
+              value: "8096"
+            # Overlay smoke uses X-Dev-User-Sub. Compose 単体も WORKSPACE_DEV_AUTH。
+            # Web は overlay で OIDC 必須（deployment-web.yaml）。
+            - name: WORKSPACE_DEV_AUTH
+              value: "true"
+            - name: WORKSPACE_CORS_ORIGIN
+              value: http://workspace.localhost
+            - name: WORKSPACE_PUBLIC_URL
+              value: http://workspace-api.localhost
+            - name: WORKSPACE_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: p04-secrets
+                  key: WORKSPACE_INTERNAL_TOKEN
+            - name: OIDC_ISSUER
+              value: http://idp.localhost
+            - name: OIDC_INTERNAL_BASE
+              value: http://idp.p01.svc.cluster.local:8080
+            - name: OIDC_AUDIENCE
+              value: pf-workspace-web
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8096
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8096
+            initialDelaySeconds: 10
+            periodSeconds: 10

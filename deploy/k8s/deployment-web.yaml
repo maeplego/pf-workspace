@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    app: workspace-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workspace-web
+  template:
+    metadata:
+      labels:
+        app: workspace-web
+    spec:
+      containers:
+        - name: web
+          image: pf-workspace-web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3006
+              name: http
+          env:
+            - name: PORT
+              value: "3006"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: WORKSPACE_API_URL
+              value: http://api.p04.svc.cluster.local:8096
+            - name: OIDC_ISSUER
+              value: http://idp.localhost
+            - name: OIDC_INTERNAL_BASE
+              value: http://idp.p01.svc.cluster.local:8080
+            - name: OIDC_CLIENT_ID
+              value: pf-workspace-web
+            - name: OIDC_REDIRECT_URI
+              value: http://workspace.localhost/callback
+            - name: OIDC_POST_LOGOUT_REDIRECT_URI
+              value: http://workspace.localhost/logged-out
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3006
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3006
+            initialDelaySeconds: 20
+            periodSeconds: 10

@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collab
+  labels:
+    app: workspace-collab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workspace-collab
+  template:
+    metadata:
+      labels:
+        app: workspace-collab
+    spec:
+      containers:
+        - name: collab
+          image: pf-workspace-collab:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8097
+              name: http
+          env:
+            - name: COLLAB_PORT
+              value: "8097"
+            - name: COLLAB_API_URL
+              value: http://api.p04.svc.cluster.local:8096
+            - name: COLLAB_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: p04-secrets
+                  key: WORKSPACE_INTERNAL_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8097
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8097
+            initialDelaySeconds: 10
+            periodSeconds: 10

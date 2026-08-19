@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: p04
+
+resources:
+  - deployment-api.yaml
+  - deployment-collab.yaml
+  - deployment-web.yaml
+  - service-api.yaml
+  - service-collab.yaml
+  - service-web.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: portfolio-integration
+    includeSelectors: false

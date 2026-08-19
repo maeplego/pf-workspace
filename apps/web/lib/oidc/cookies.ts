@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import type { NextRequest, NextResponse } from "next/server";
 
-import { clientId, oidcEnabled } from "./env";
+import { cookieKey } from "./env";
 
 const week = 60 * 60 * 24 * 7;
 
@@ -12,10 +12,7 @@ const base = {
   secure: false,
 };
 
-export function cookieKey(name: string): string {
-  if (!oidcEnabled()) return name;
-  return `${name}_${clientId().replace(/-/g, "_")}`;
-}
+export { cookieKey };
 
 export function setOn(res: NextResponse, name: string, value: string, maxAge = week) {
   res.cookies.set(cookieKey(name), value, { ...base, maxAge });
