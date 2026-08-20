@@ -2,7 +2,7 @@ import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, createBoard, createInvitation, createWorkspace, resendInvitation, revokeInvitation, searchOrgMembers, switchActiveOrg, syncMemberDisplayName, unarchiveBoard, updateInvitationPolicy } from "./actions";
+import { apiFetchForPage, createBoard, createInvitation, createWorkspace, leaveWorkspace, removeMember, resendInvitation, revokeInvitation, searchOrgMembers, switchActiveOrg, syncMemberDisplayName, unarchiveBoard, updateInvitationPolicy, updateMemberRole } from "./actions";
 import { InviteEmailField } from "./InviteEmailField";
 import { OrgSwitcher } from "./OrgSwitcher";
 import { ambiguousDisplayNames, memberLabel } from "../lib/display";
@@ -149,6 +149,33 @@ export default async function HomePage({
     redirect(devUser ? `/?user=${encodeURIComponent(devUser)}` : "/");
   }
 
+  async function updateMemberRoleAction(formData: FormData) {
+    "use server";
+    const wsId = String(formData.get("workspaceId") || "");
+    const memberSub = String(formData.get("memberSub") || "");
+    const role = String(formData.get("role") || "");
+    if (!wsId || !memberSub || !role) return;
+    await updateMemberRole(wsId, memberSub, role, devUser);
+    redirect(devUser ? `/?user=${encodeURIComponent(devUser)}` : "/");
+  }
+
+  async function removeMemberAction(formData: FormData) {
+    "use server";
+    const wsId = String(formData.get("workspaceId") || "");
+    const memberSub = String(formData.get("memberSub") || "");
+    if (!wsId || !memberSub) return;
+    await removeMember(wsId, memberSub, devUser);
+    redirect(devUser ? `/?user=${encodeURIComponent(devUser)}` : "/");
+  }
+
+  async function leaveWorkspaceAction(formData: FormData) {
+    "use server";
+    const wsId = String(formData.get("workspaceId") || "");
+    if (!wsId) return;
+    await leaveWorkspace(wsId, devUser);
+    redirect(devUser ? `/?user=${encodeURIComponent(devUser)}` : "/");
+  }
+
   return (
     <>
       <section className="hero">
@@ -261,18 +288,51 @@ export default async function HomePage({
               {(membersByWs[ws.id] || []).map((m) => {
                 const dupes = ambiguousDisplayNames(membersByWs[ws.id] || []);
                 const label = memberLabel(m, dupes);
+                const isMe = m.sub === session!.sub;
+                const iAmOwner = (membersByWs[ws.id] || []).some((x) => x.sub === session!.sub && x.role === "owner");
+                const ownerCount = (membersByWs[ws.id] || []).filter((x) => x.role === "owner").length;
                 return (
-                  <li key={m.sub}>
+                  <li key={m.sub} style={{ marginBottom: "0.35rem" }}>
                     <Link href={devUser ? `/members/${ws.id}/${encodeURIComponent(m.sub)}?user=${devUser}` : `/members/${ws.id}/${encodeURIComponent(m.sub)}`}>
                       {label}
                     </Link>{" "}
                     <span className="muted">({m.role})</span>
+                    {iAmOwner && !isMe && m.role !== "owner" ? (
+                      <form action={updateMemberRoleAction} className="row" style={{ display: "inline-flex", gap: "0.35rem", marginLeft: "0.5rem" }}>
+                        <input type="hidden" name="workspaceId" value={ws.id} />
+                        <input type="hidden" name="memberSub" value={m.sub} />
+                        <select name="role" defaultValue={m.role} style={{ width: "auto" }}>
+                          <option value="member">member</option>
+                          <option value="guest">guest</option>
+                        </select>
+                        <button type="submit" className="btn btn-secondary">
+                          権限変更
+                        </button>
+                      </form>
+                    ) : null}
+                    {iAmOwner && !isMe ? (
+                      <form action={removeMemberAction} style={{ display: "inline", marginLeft: "0.35rem" }}>
+                        <input type="hidden" name="workspaceId" value={ws.id} />
+                        <input type="hidden" name="memberSub" value={m.sub} />
+                        <button type="submit" className="btn btn-secondary">
+                          除名
+                        </button>
+                      </form>
+                    ) : null}
+                    {isMe && !(m.role === "owner" && ownerCount <= 1) ? (
+                      <form action={leaveWorkspaceAction} style={{ display: "inline", marginLeft: "0.35rem" }}>
+                        <input type="hidden" name="workspaceId" value={ws.id} />
+                        <button type="submit" className="btn btn-secondary">
+                          退出
+                        </button>
+                      </form>
+                    ) : null}
                   </li>
                 );
               })}
             </ul>
             <p className="muted">
-              guest は published の Wiki 閲覧とボード参照だけです。メンバー参加は招待リンク経由になり、sub の手入力は不要です。
+              guest は published の Wiki 閲覧とボード参照だけです。メンバー参加は招待リンク経由になり、sub の手入力は不要です。唯一の owner は退出できません。
             </p>
             {(membersByWs[ws.id] || []).some((m) => m.sub === session!.sub && m.role === "owner") ? (
               <form action={createInvitationAction} className="row" style={{ marginTop: "0.5rem" }}>

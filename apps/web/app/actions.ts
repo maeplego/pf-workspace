@@ -246,6 +246,31 @@ export async function addMember(workspaceId: string, formData: FormData, devUser
   revalidatePath("/");
 }
 
+export async function updateMemberRole(workspaceId: string, memberSub: string, role: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/workspaces/${workspaceId}/members/${encodeURIComponent(memberSub)}`, session, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+  revalidatePath("/");
+}
+
+export async function removeMember(workspaceId: string, memberSub: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/workspaces/${workspaceId}/members/${encodeURIComponent(memberSub)}`, session, {
+    method: "DELETE",
+  });
+  revalidatePath("/");
+}
+
+export async function leaveWorkspace(workspaceId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/workspaces/${workspaceId}/leave`, session, {
+    method: "POST",
+  });
+  revalidatePath("/");
+}
+
 export async function createInvitation(workspaceId: string, formData: FormData, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
   const role = String(formData.get("role") || "member");

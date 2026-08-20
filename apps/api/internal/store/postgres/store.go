@@ -238,6 +238,30 @@ func (s *Store) UpdateMemberDisplayName(wsID, sub, displayName string) (domain.M
 	return s.GetMember(wsID, sub)
 }
 
+func (s *Store) UpdateMemberRole(wsID, sub string, role domain.Role) (domain.Member, error) {
+	ctx := context.Background()
+	tag, err := s.db().exec(ctx, "UPDATE members SET role = $3 WHERE workspace_id = $1 AND sub = $2", wsID, sub, role)
+	if err != nil {
+		return domain.Member{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	return s.GetMember(wsID, sub)
+}
+
+func (s *Store) RemoveMember(wsID, sub string) error {
+	ctx := context.Background()
+	tag, err := s.db().exec(ctx, "DELETE FROM members WHERE workspace_id = $1 AND sub = $2", wsID, sub)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) CreateInvitation(wsID, tokenHash string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time, invitedBy string, now time.Time) (domain.Invitation, error) {
 	ctx := context.Background()
 	if err := s.workspaceExists(ctx, wsID); err != nil {

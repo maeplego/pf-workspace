@@ -18,6 +18,8 @@ type Store interface {
 	GetMember(wsID, sub string) (domain.Member, error)
 	AddMember(wsID, sub string, role domain.Role, now time.Time) (domain.Member, error)
 	UpdateMemberDisplayName(wsID, sub, displayName string) (domain.Member, error)
+	UpdateMemberRole(wsID, sub string, role domain.Role) (domain.Member, error)
+	RemoveMember(wsID, sub string) error
 	CreateInvitation(wsID, tokenHash string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time, invitedBy string, now time.Time) (domain.Invitation, error)
 	ListInvitations(wsID string) ([]domain.Invitation, error)
 	GetInvitationByTokenHash(tokenHash string) (domain.Invitation, error)

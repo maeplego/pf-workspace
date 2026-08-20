@@ -147,6 +147,114 @@ func (s *Service) AddMember(actorSub, wsID, memberSub string, role domain.Role) 
 	return s.store.AddMember(wsID, memberSub, role, s.now().UTC())
 }
 
+func (s *Service) countOwners(wsID string) (int, error) {
+	members, err := s.store.ListMembers(wsID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, m := range members {
+		if m.Role == domain.RoleOwner {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (s *Service) UpdateMemberRole(actorSub, wsID, targetSub string, role domain.Role) (domain.Member, error) {
+	if strings.TrimSpace(targetSub) == "" {
+		return domain.Member{}, domain.ErrInvalid
+	}
+	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
+		return domain.Member{}, err
+	}
+	if role != domain.RoleMember && role != domain.RoleGuest {
+		return domain.Member{}, domain.ErrInvalid
+	}
+	target, err := s.store.GetMember(wsID, targetSub)
+	if err != nil {
+		return domain.Member{}, err
+	}
+	if target.Role == domain.RoleOwner {
+		owners, err := s.countOwners(wsID)
+		if err != nil {
+			return domain.Member{}, err
+		}
+		if owners <= 1 {
+			return domain.Member{}, domain.ErrForbidden
+		}
+	}
+	updated, err := s.store.UpdateMemberRole(wsID, targetSub, role)
+	if err != nil {
+		return domain.Member{}, err
+	}
+	now := s.now().UTC()
+	_ = s.store.AddAuditEvent(domain.AuditEvent{
+		ID: id.New(), WorkspaceID: wsID, ActorSub: actorSub, TargetSub: targetSub, Type: "workspace.member.role_updated", CreatedAt: now,
+	})
+	return updated, nil
+}
+
+func (s *Service) RemoveMember(actorSub, wsID, targetSub string) error {
+	if strings.TrimSpace(targetSub) == "" {
+		return domain.ErrInvalid
+	}
+	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
+		return err
+	}
+	if actorSub == targetSub {
+		return domain.ErrInvalid
+	}
+	target, err := s.store.GetMember(wsID, targetSub)
+	if err != nil {
+		return err
+	}
+	if target.Role == domain.RoleOwner {
+		owners, err := s.countOwners(wsID)
+		if err != nil {
+			return err
+		}
+		if owners <= 1 {
+			return domain.ErrForbidden
+		}
+	}
+	if err := s.store.RemoveMember(wsID, targetSub); err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	_ = s.store.AddAuditEvent(domain.AuditEvent{
+		ID: id.New(), WorkspaceID: wsID, ActorSub: actorSub, TargetSub: targetSub, Type: "workspace.member.removed", CreatedAt: now,
+	})
+	return nil
+}
+
+func (s *Service) LeaveWorkspace(sub, wsID string) error {
+	if err := s.requireRead(wsID, sub); err != nil {
+		return err
+	}
+	me, err := s.store.GetMember(wsID, sub)
+	if err != nil {
+		return err
+	}
+	if me.Role == domain.RoleOwner {
+		owners, err := s.countOwners(wsID)
+		if err != nil {
+			return err
+		}
+		if owners <= 1 {
+			return domain.ErrForbidden
+		}
+	}
+	if err := s.store.RemoveMember(wsID, sub); err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	_ = s.store.AddAuditEvent(domain.AuditEvent{
+		ID: id.New(), WorkspaceID: wsID, ActorSub: sub, TargetSub: sub, Type: "workspace.member.left", CreatedAt: now,
+	})
+	return nil
+}
+
 func newInviteToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

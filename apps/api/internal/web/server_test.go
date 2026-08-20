@@ -1986,6 +1986,137 @@ func TestInvitationPolicyUpdate(t *testing.T) {
 	}
 }
 
+func TestMemberRoleUpdateRemoveAndLeave(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Members"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/members", map[string]string{"sub": "member-1", "role": "member"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("add member status %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPatch, ts.URL+"/v1/workspaces/"+ws.ID+"/members/member-1", map[string]string{"role": "guest"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("patch role status %d", res.StatusCode)
+	}
+	var patched struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&patched); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if patched.Role != "guest" {
+		t.Fatalf("role=%s", patched.Role)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPatch, ts.URL+"/v1/workspaces/"+ws.ID+"/members/member-1", map[string]string{"role": "owner"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("promote to owner want 400 got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodDelete, ts.URL+"/v1/workspaces/"+ws.ID+"/members/owner-1", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("self-remove via DELETE want 400 got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/leave", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("sole owner leave want 403 got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodDelete, ts.URL+"/v1/workspaces/"+ws.ID+"/members/member-1", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove member status %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/members", map[string]string{"sub": "member-2", "role": "member"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("re-add member status %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/leave", nil, "member-2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("leave status %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/audit-events", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("audit status %d", res.StatusCode)
+	}
+	var audit struct {
+		Events []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&audit); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	want := map[string]bool{
+		"workspace.member.role_updated": false,
+		"workspace.member.removed":      false,
+		"workspace.member.left":         false,
+	}
+	for _, ev := range audit.Events {
+		if _, ok := want[ev.Type]; ok {
+			want[ev.Type] = true
+		}
+	}
+	for typ, ok := range want {
+		if !ok {
+			t.Fatalf("missing audit %s in %+v", typ, audit.Events)
+		}
+	}
+}
+
 func TestOrgMembersDevFallback(t *testing.T) {
 	ts := testServer(t)
 	defer ts.Close()

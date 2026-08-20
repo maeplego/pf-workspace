@@ -190,6 +190,25 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/members/me"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/members/me")
 		s.syncMemberDisplayName(w, r, u.Sub, wsID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/leave"):
+		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/leave")
+		s.leaveWorkspace(w, r, u.Sub, wsID)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/members/"):
+		rest := strings.TrimPrefix(r.URL.Path, "/v1/workspaces/")
+		parts := strings.Split(rest, "/")
+		if len(parts) == 3 && parts[1] == "members" && parts[2] != "" && parts[2] != "me" {
+			s.updateMemberRole(w, r, u.Sub, parts[0], parts[2])
+			return
+		}
+		http.NotFound(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/members/"):
+		rest := strings.TrimPrefix(r.URL.Path, "/v1/workspaces/")
+		parts := strings.Split(rest, "/")
+		if len(parts) == 3 && parts[1] == "members" && parts[2] != "" && parts[2] != "me" {
+			s.removeMember(w, r, u.Sub, parts[0], parts[2])
+			return
+		}
+		http.NotFound(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/members/"):
 		rest := strings.TrimPrefix(r.URL.Path, "/v1/workspaces/")
 		parts := strings.Split(rest, "/")
@@ -399,6 +418,38 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request, actorSub, wsI
 		return
 	}
 	writeJSON(w, http.StatusCreated, m)
+}
+
+func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request, actorSub, wsID, targetSub string) {
+	var body struct {
+		Role domain.Role `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
+		return
+	}
+	m, err := s.ts(r.Context()).UpdateMemberRole(actorSub, wsID, targetSub, body.Role)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, actorSub, wsID, targetSub string) {
+	if err := s.ts(r.Context()).RemoveMember(actorSub, wsID, targetSub); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) leaveWorkspace(w http.ResponseWriter, r *http.Request, sub, wsID string) {
+	if err := s.ts(r.Context()).LeaveWorkspace(sub, wsID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request, u auth.User, wsID string) {

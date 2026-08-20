@@ -181,6 +181,36 @@ func (s *Store) AddMember(wsID, sub string, role domain.Role, now time.Time) (do
 	return m, nil
 }
 
+func (s *Store) UpdateMemberRole(wsID, sub string, role domain.Role) (domain.Member, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	members, ok := s.members[wsID]
+	if !ok {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	m, ok := members[sub]
+	if !ok {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	m.Role = role
+	members[sub] = m
+	return m, nil
+}
+
+func (s *Store) RemoveMember(wsID, sub string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	members, ok := s.members[wsID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if _, ok := members[sub]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(members, sub)
+	return nil
+}
+
 func (s *Store) CreateInvitation(wsID, tokenHash string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time, invitedBy string, now time.Time) (domain.Invitation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
