@@ -55,14 +55,21 @@ func (s *Store) migrate() error {
 func splitSQL(raw string) []string {
 	var out []string
 	var b strings.Builder
+	inDollar := false
 	for _, line := range strings.Split(raw, "\n") {
 		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "--") {
+		if !inDollar && strings.HasPrefix(trim, "--") {
 			continue
+		}
+		// Count $$ toggles so function bodies with trailing ';' stay one statement.
+		if n := strings.Count(line, "$$"); n > 0 {
+			if n%2 == 1 {
+				inDollar = !inDollar
+			}
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
-		if strings.HasSuffix(trim, ";") {
+		if !inDollar && strings.HasSuffix(trim, ";") {
 			stmt := strings.TrimSpace(b.String())
 			b.Reset()
 			if stmt != "" {
