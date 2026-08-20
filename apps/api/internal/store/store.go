@@ -21,6 +21,7 @@ type Store interface {
 	CreateInvitation(wsID, tokenHash string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time, invitedBy string, now time.Time) (domain.Invitation, error)
 	ListInvitations(wsID string) ([]domain.Invitation, error)
 	GetInvitationByTokenHash(tokenHash string) (domain.Invitation, error)
+	UpdateInvitationPolicy(wsID, inviteID string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time) (domain.Invitation, error)
 	RevokeInvitation(wsID, inviteID string, now time.Time) (domain.Invitation, bool, error)
 	AcceptInvitation(inviteID, sub string, now time.Time) (domain.Invitation, domain.Member, bool, error)
 	AddAuditEvent(event domain.AuditEvent) error

@@ -2,7 +2,7 @@ import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, createBoard, createInvitation, createWorkspace, resendInvitation, revokeInvitation, syncMemberDisplayName, unarchiveBoard } from "./actions";
+import { apiFetchForPage, createBoard, createInvitation, createWorkspace, resendInvitation, revokeInvitation, syncMemberDisplayName, unarchiveBoard, updateInvitationPolicy } from "./actions";
 import { ambiguousDisplayNames, memberLabel } from "../lib/display";
 import { oidcEnabled } from "../lib/oidc/env";
 import { getWorkspaceSession } from "../lib/session";
@@ -122,6 +122,15 @@ export default async function HomePage({
     if (devUser) q.set("user", devUser);
     q.set("resentInvite", token);
     redirect(`/?${q.toString()}`);
+  }
+
+  async function updateInvitationPolicyAction(formData: FormData) {
+    "use server";
+    const wsId = String(formData.get("workspaceId") || "");
+    const invitationId = String(formData.get("invitationId") || "");
+    if (!wsId || !invitationId) return;
+    await updateInvitationPolicy(wsId, invitationId, formData, devUser);
+    redirect(devUser ? `/?user=${encodeURIComponent(devUser)}` : "/");
   }
 
   return (
@@ -273,6 +282,20 @@ export default async function HomePage({
                         </span>
                         {status === "active" ? (
                           <>
+                            <form action={updateInvitationPolicyAction} className="row" style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginTop: "0.35rem" }}>
+                              <input type="hidden" name="workspaceId" value={ws.id} />
+                              <input type="hidden" name="invitationId" value={inv.id} />
+                              <select name="role" defaultValue={inv.role} style={{ width: "auto" }}>
+                                <option value="member">member</option>
+                                <option value="guest">guest</option>
+                              </select>
+                              <input name="maxUses" type="number" min={Math.max(1, inv.useCount)} max={100} defaultValue={inv.maxUses} style={{ width: 80 }} />
+                              <input name="ttlHours" type="number" min={1} max={336} defaultValue={72} style={{ width: 80 }} title="残り有効時間（時間）" />
+                              <input name="invitedEmail" type="email" defaultValue={inv.invitedEmail || ""} placeholder="招待先メール" style={{ width: 180 }} />
+                              <button type="submit" className="btn btn-secondary">
+                                条件更新
+                              </button>
+                            </form>
                             <form action={resendInvitationAction} className="row" style={{ display: "inline-flex", marginLeft: "0.5rem" }}>
                               <input type="hidden" name="workspaceId" value={ws.id} />
                               <input type="hidden" name="invitationId" value={inv.id} />

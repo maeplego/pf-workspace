@@ -300,6 +300,35 @@ func (s *Store) GetInvitationByTokenHash(tokenHash string) (domain.Invitation, e
 	return inv, nil
 }
 
+func (s *Store) UpdateInvitationPolicy(wsID, inviteID string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time) (domain.Invitation, error) {
+	ctx := context.Background()
+	if err := s.workspaceExists(ctx, wsID); err != nil {
+		return domain.Invitation{}, err
+	}
+	var inv domain.Invitation
+	err := s.db().QueryRow(ctx, `UPDATE invitations
+		SET role = $3, invited_email = $4, max_uses = $5, expires_at = $6
+		WHERE id = $1 AND workspace_id = $2 AND revoked_at IS NULL
+		RETURNING id, workspace_id, token_hash, role, invited_email, max_uses, use_count, expires_at, invited_by, created_at, revoked_at`,
+		inviteID, wsID, role, invitedEmail, maxUses, expiresAt).
+		Scan(&inv.ID, &inv.WorkspaceID, &inv.TokenHash, &inv.Role, &inv.InvitedEmail, &inv.MaxUses, &inv.UseCount, &inv.ExpiresAt, &inv.InvitedBy, &inv.CreatedAt, &inv.RevokedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			var revoked *time.Time
+			lookupErr := s.db().QueryRow(ctx, `SELECT revoked_at FROM invitations WHERE id = $1 AND workspace_id = $2`, inviteID, wsID).Scan(&revoked)
+			if lookupErr != nil {
+				return domain.Invitation{}, mapErr(lookupErr)
+			}
+			if revoked != nil {
+				return domain.Invitation{}, domain.ErrForbidden
+			}
+			return domain.Invitation{}, domain.ErrNotFound
+		}
+		return domain.Invitation{}, mapErr(err)
+	}
+	return inv, nil
+}
+
 func (s *Store) RevokeInvitation(wsID, inviteID string, now time.Time) (domain.Invitation, bool, error) {
 	ctx := context.Background()
 	if err := s.workspaceExists(ctx, wsID); err != nil {

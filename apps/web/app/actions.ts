@@ -213,6 +213,24 @@ export async function resendInvitation(workspaceId: string, invitationId: string
   return data.token;
 }
 
+export async function updateInvitationPolicy(workspaceId: string, invitationId: string, formData: FormData, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  const role = String(formData.get("role") || "").trim();
+  const invitedEmail = String(formData.get("invitedEmail") || "").trim();
+  const maxUsesRaw = Number(String(formData.get("maxUses") || ""));
+  const ttlHoursRaw = Number(String(formData.get("ttlHours") || ""));
+  const body: Record<string, unknown> = {};
+  if (role) body.role = role;
+  if (Number.isFinite(maxUsesRaw) && maxUsesRaw > 0) body.maxUses = maxUsesRaw;
+  if (Number.isFinite(ttlHoursRaw) && ttlHoursRaw > 0) body.ttlHours = ttlHoursRaw;
+  body.invitedEmail = invitedEmail;
+  await apiFetch(`/v1/workspaces/${workspaceId}/invitations/${invitationId}`, session, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  revalidatePath("/");
+}
+
 export async function previewInvitation(token: string, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
   return apiFetch(`/v1/invitations/${encodeURIComponent(token)}`, session) as Promise<{

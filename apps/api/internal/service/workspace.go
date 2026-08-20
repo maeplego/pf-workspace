@@ -230,6 +230,89 @@ func (s *Service) RevokeInvitation(actorSub, wsID, inviteID string) (domain.Invi
 	return inv, nil
 }
 
+func (s *Service) UpdateInvitationPolicy(actorSub, wsID, inviteID string, role *domain.Role, invitedEmail *string, maxUses *int, ttlHours *int) (domain.Invitation, error) {
+	if strings.TrimSpace(inviteID) == "" {
+		return domain.Invitation{}, domain.ErrInvalid
+	}
+	if role == nil && invitedEmail == nil && maxUses == nil && ttlHours == nil {
+		return domain.Invitation{}, domain.ErrInvalid
+	}
+	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
+		return domain.Invitation{}, err
+	}
+	invitations, err := s.store.ListInvitations(wsID)
+	if err != nil {
+		return domain.Invitation{}, err
+	}
+	var base domain.Invitation
+	found := false
+	for _, inv := range invitations {
+		if inv.ID == inviteID {
+			base = inv
+			found = true
+			break
+		}
+	}
+	if !found {
+		return domain.Invitation{}, domain.ErrNotFound
+	}
+	if base.RevokedAt != nil {
+		return domain.Invitation{}, domain.ErrForbidden
+	}
+
+	nextRole := base.Role
+	if role != nil {
+		nextRole = *role
+		if nextRole == "" {
+			nextRole = domain.RoleMember
+		}
+		if nextRole != domain.RoleMember && nextRole != domain.RoleGuest {
+			return domain.Invitation{}, domain.ErrInvalid
+		}
+	}
+
+	nextEmail := base.InvitedEmail
+	if invitedEmail != nil {
+		nextEmail = normalizeEmail(*invitedEmail)
+	}
+
+	nextMax := base.MaxUses
+	if maxUses != nil {
+		nextMax = *maxUses
+		if nextMax <= 0 {
+			nextMax = 1
+		}
+		if nextMax > domain.MaxInviteUses {
+			return domain.Invitation{}, domain.ErrInvalid
+		}
+	}
+	if nextMax < base.UseCount {
+		return domain.Invitation{}, domain.ErrInvalid
+	}
+
+	now := s.now().UTC()
+	nextExpires := base.ExpiresAt
+	if ttlHours != nil {
+		ttl := *ttlHours
+		if ttl <= 0 {
+			ttl = 72
+		}
+		if ttl > 24*14 {
+			return domain.Invitation{}, domain.ErrInvalid
+		}
+		nextExpires = now.Add(time.Duration(ttl) * time.Hour)
+	}
+
+	updated, err := s.store.UpdateInvitationPolicy(wsID, inviteID, nextRole, nextEmail, nextMax, nextExpires)
+	if err != nil {
+		return domain.Invitation{}, err
+	}
+	_ = s.store.AddAuditEvent(domain.AuditEvent{
+		ID: id.New(), WorkspaceID: wsID, ActorSub: actorSub, Type: "workspace.invitation.policy_updated", InviteID: updated.ID, CreatedAt: now,
+	})
+	return updated, nil
+}
+
 func (s *Service) ResendInvitation(actorSub, wsID, inviteID string) (domain.Invitation, string, error) {
 	if strings.TrimSpace(inviteID) == "" {
 		return domain.Invitation{}, "", domain.ErrInvalid

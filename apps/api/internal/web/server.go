@@ -219,6 +219,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.resendInvitation(w, r, u.Sub, wsID, inviteID)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.Contains(r.URL.Path, "/invitations/"):
+		rest := strings.TrimPrefix(r.URL.Path, "/v1/workspaces/")
+		wsID, inviteID, ok := strings.Cut(rest, "/invitations/")
+		if !ok || wsID == "" || inviteID == "" || strings.Contains(inviteID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		s.updateInvitationPolicy(w, r, u.Sub, wsID, inviteID)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/invitations"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/invitations")
 		s.listInvitations(w, r, u.Sub, wsID)
@@ -441,6 +449,25 @@ func (s *Server) resendInvitation(w http.ResponseWriter, r *http.Request, actorS
 		"invitation": inv,
 		"token":      token,
 	})
+}
+
+func (s *Server) updateInvitationPolicy(w http.ResponseWriter, r *http.Request, actorSub, wsID, inviteID string) {
+	var body struct {
+		Role         *domain.Role `json:"role"`
+		MaxUses      *int         `json:"maxUses"`
+		TTLHours     *int         `json:"ttlHours"`
+		InvitedEmail *string      `json:"invitedEmail"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
+		return
+	}
+	inv, err := s.ts(r.Context()).UpdateInvitationPolicy(actorSub, wsID, inviteID, body.Role, body.InvitedEmail, body.MaxUses, body.TTLHours)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, inv)
 }
 
 func (s *Server) previewInvitation(w http.ResponseWriter, r *http.Request, sub, token string) {

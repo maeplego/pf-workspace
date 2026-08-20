@@ -1850,6 +1850,134 @@ func TestInvitationResend(t *testing.T) {
 	}
 }
 
+func TestInvitationPolicyUpdate(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Policy WS"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/invitations", map[string]any{
+		"role": "member", "maxUses": 1, "ttlHours": 24,
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		Token      string `json:"token"`
+		Invitation struct {
+			ID string `json:"id"`
+		} `json:"invitation"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPatch, ts.URL+"/v1/workspaces/"+ws.ID+"/invitations/"+created.Invitation.ID, map[string]any{
+		"role": "guest", "maxUses": 3, "ttlHours": 48, "invitedEmail": "bound@example.com",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("policy update %d", res.StatusCode)
+	}
+	var updated struct {
+		ID           string `json:"id"`
+		Role         string `json:"role"`
+		MaxUses      int    `json:"maxUses"`
+		InvitedEmail string `json:"invitedEmail"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if updated.ID != created.Invitation.ID || updated.Role != "guest" || updated.MaxUses != 3 || updated.InvitedEmail != "bound@example.com" {
+		t.Fatalf("unexpected update %#v", updated)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/invitations/"+created.Token, nil, "new-user"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("same token preview after policy update %d", res.StatusCode)
+	}
+	var preview struct {
+		Invitation struct {
+			Role         string `json:"role"`
+			MaxUses      int    `json:"maxUses"`
+			InvitedEmail string `json:"invitedEmail"`
+		} `json:"invitation"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&preview); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if preview.Invitation.Role != "guest" || preview.Invitation.MaxUses != 3 || preview.Invitation.InvitedEmail != "bound@example.com" {
+		t.Fatalf("preview %#v", preview.Invitation)
+	}
+
+	res, err = client.Do(authReqDev(t, http.MethodPost, ts.URL+"/v1/invitations/"+created.Token+"/accept", map[string]string{}, "guest-1", "bound@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("accept after policy update %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/members/guest-1", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var member struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&member); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if member.Role != "guest" {
+		t.Fatalf("member role %s", member.Role)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/audit-events", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audits struct {
+		Events []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&audits); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	found := false
+	for _, ev := range audits.Events {
+		if ev.Type == "workspace.invitation.policy_updated" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected workspace.invitation.policy_updated audit event")
+	}
+}
+
 func TestArchiveTrashAndChannelKept(t *testing.T) {
 	ts := testServer(t)
 	defer ts.Close()
