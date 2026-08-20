@@ -178,6 +178,102 @@ func TestWorkspaceAndKanbanFlow(t *testing.T) {
 	_ = res.Body.Close()
 }
 
+func TestColumnCRUD(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Cols"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/boards", map[string]string{"name": "Board"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var board struct {
+		ID      string `json:"id"`
+		Columns []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"columns"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&board); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/boards/"+board.ID+"/columns", map[string]string{"name": "Review"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create column: %d", res.StatusCode)
+	}
+	var created struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if created.Name != "Review" {
+		t.Fatalf("name=%s", created.Name)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPatch, ts.URL+"/v1/columns/"+created.ID, map[string]string{"name": "QA"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("rename: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	ids := []string{board.Columns[2].ID, board.Columns[0].ID, board.Columns[1].ID, created.ID}
+	res, err = client.Do(authReq(t, http.MethodPatch, ts.URL+"/v1/boards/"+board.ID+"/columns/reorder", map[string]any{"columnIds": ids}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("reorder: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/columns/"+board.Columns[0].ID+"/cards", map[string]string{"title": "Keep"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodDelete, ts.URL+"/v1/columns/"+board.Columns[0].ID, nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("non-empty delete want 400 got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodDelete, ts.URL+"/v1/columns/"+created.ID, nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete empty: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+}
+
 func TestWikiTreeAndGuestVisibility(t *testing.T) {
 	ts := testServer(t)
 	defer ts.Close()

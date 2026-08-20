@@ -144,6 +144,41 @@ export async function createCard(columnId: string, title: string, devUser?: stri
   });
 }
 
+export async function createColumn(boardId: string, name: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/boards/${boardId}/columns`, session, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  revalidatePath(`/boards/${boardId}`);
+}
+
+export async function renameColumn(boardId: string, columnId: string, name: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/columns/${columnId}`, session, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+  revalidatePath(`/boards/${boardId}`);
+}
+
+export async function deleteColumn(boardId: string, columnId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/columns/${columnId}`, session, {
+    method: "DELETE",
+  });
+  revalidatePath(`/boards/${boardId}`);
+}
+
+export async function reorderColumns(boardId: string, columnIds: string[], devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/boards/${boardId}/columns/reorder`, session, {
+    method: "PATCH",
+    body: JSON.stringify({ columnIds }),
+  });
+  revalidatePath(`/boards/${boardId}`);
+}
+
 export async function moveCard(
   boardId: string,
   cardId: string,

@@ -475,6 +475,101 @@ func (s *Store) ColumnBoardID(columnID string) (string, error) {
 	return col.BoardID, nil
 }
 
+func (s *Store) CreateColumn(boardID, name string, now time.Time) (domain.Column, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.boards[boardID]; !ok {
+		return domain.Column{}, domain.ErrNotFound
+	}
+	pos := len(s.boardCols[boardID])
+	col := domain.Column{
+		ID:        id.New(),
+		BoardID:   boardID,
+		Name:      name,
+		Position:  pos,
+		CreatedAt: now,
+	}
+	s.columns[col.ID] = col
+	s.boardCols[boardID] = append(s.boardCols[boardID], col.ID)
+	s.columnCards[col.ID] = []string{}
+	return col, nil
+}
+
+func (s *Store) RenameColumn(columnID, name string) (domain.Column, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	col, ok := s.columns[columnID]
+	if !ok {
+		return domain.Column{}, domain.ErrNotFound
+	}
+	col.Name = name
+	s.columns[columnID] = col
+	return col, nil
+}
+
+func (s *Store) DeleteColumn(columnID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	col, ok := s.columns[columnID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if len(s.columnCards[columnID]) > 0 {
+		return domain.ErrInvalid
+	}
+	ids := s.boardCols[col.BoardID]
+	if len(ids) <= 1 {
+		return domain.ErrForbidden
+	}
+	next := make([]string, 0, len(ids)-1)
+	for _, id := range ids {
+		if id != columnID {
+			next = append(next, id)
+		}
+	}
+	s.boardCols[col.BoardID] = next
+	for i, id := range next {
+		c := s.columns[id]
+		c.Position = i
+		s.columns[id] = c
+	}
+	delete(s.columns, columnID)
+	delete(s.columnCards, columnID)
+	return nil
+}
+
+func (s *Store) ReorderColumns(boardID string, columnIDs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.boards[boardID]; !ok {
+		return domain.ErrNotFound
+	}
+	current := s.boardCols[boardID]
+	if len(current) != len(columnIDs) {
+		return domain.ErrInvalid
+	}
+	seen := make(map[string]bool, len(current))
+	for _, id := range current {
+		seen[id] = true
+	}
+	for _, id := range columnIDs {
+		if !seen[id] {
+			return domain.ErrInvalid
+		}
+		delete(seen, id)
+	}
+	if len(seen) != 0 {
+		return domain.ErrInvalid
+	}
+	s.boardCols[boardID] = append([]string{}, columnIDs...)
+	for i, id := range columnIDs {
+		c := s.columns[id]
+		c.Position = i
+		s.columns[id] = c
+	}
+	return nil
+}
+
 func (s *Store) CreateCard(columnID, title, description string, now time.Time) (domain.Card, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

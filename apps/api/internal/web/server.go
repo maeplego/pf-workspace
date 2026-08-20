@@ -107,6 +107,18 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/boards/") && strings.HasSuffix(r.URL.Path, "/unarchive"):
 		boardID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/boards/"), "/unarchive")
 		s.unarchiveBoard(w, r, u.Sub, boardID)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/boards/") && strings.HasSuffix(r.URL.Path, "/columns/reorder"):
+		boardID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/boards/"), "/columns/reorder")
+		s.reorderColumns(w, r, u.Sub, boardID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/boards/") && strings.HasSuffix(r.URL.Path, "/columns"):
+		boardID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/boards/"), "/columns")
+		s.createColumn(w, r, u.Sub, boardID)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/columns/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/columns/"), "/"):
+		columnID := strings.TrimPrefix(r.URL.Path, "/v1/columns/")
+		s.renameColumn(w, r, u.Sub, columnID)
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/columns/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/columns/"), "/"):
+		columnID := strings.TrimPrefix(r.URL.Path, "/v1/columns/")
+		s.deleteColumn(w, r, u.Sub, columnID)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.HasSuffix(r.URL.Path, "/archive"):
 		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/archive")
 		s.archivePage(w, r, u.Sub, pageID)
@@ -613,6 +625,61 @@ func (s *Server) archiveBoard(w http.ResponseWriter, r *http.Request, sub, board
 
 func (s *Server) unarchiveBoard(w http.ResponseWriter, r *http.Request, sub, boardID string) {
 	if err := s.ts(r.Context()).UnarchiveBoard(sub, boardID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) createColumn(w http.ResponseWriter, r *http.Request, sub, boardID string) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
+		return
+	}
+	col, err := s.ts(r.Context()).CreateColumn(sub, boardID, body.Name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, col)
+}
+
+func (s *Server) renameColumn(w http.ResponseWriter, r *http.Request, sub, columnID string) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
+		return
+	}
+	col, err := s.ts(r.Context()).RenameColumn(sub, columnID, body.Name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, col)
+}
+
+func (s *Server) deleteColumn(w http.ResponseWriter, r *http.Request, sub, columnID string) {
+	if err := s.ts(r.Context()).DeleteColumn(sub, columnID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) reorderColumns(w http.ResponseWriter, r *http.Request, sub, boardID string) {
+	var body struct {
+		ColumnIDs []string `json:"columnIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
+		return
+	}
+	if err := s.ts(r.Context()).ReorderColumns(sub, boardID, body.ColumnIDs); err != nil {
 		writeErr(w, err)
 		return
 	}

@@ -36,6 +36,10 @@ type Store interface {
 	GetBoardDetail(boardID string) (domain.BoardDetail, error)
 	BoardWorkspaceID(boardID string) (string, error)
 	ColumnBoardID(columnID string) (string, error)
+	CreateColumn(boardID, name string, now time.Time) (domain.Column, error)
+	RenameColumn(columnID, name string) (domain.Column, error)
+	DeleteColumn(columnID string) error
+	ReorderColumns(boardID string, columnIDs []string) error
 	CreateCard(columnID, title, description string, now time.Time) (domain.Card, error)
 	GetCard(cardID string) (domain.Card, error)
 	CardWorkspaceID(cardID string) (string, error)

@@ -17,7 +17,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
-import { createCard, moveCard, updateCardDetails } from "../app/actions";
+import { createCard, createColumn, deleteColumn, moveCard, renameColumn, reorderColumns, updateCardDetails } from "../app/actions";
 
 export type CardView = {
   id: string;
@@ -101,6 +101,8 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprint
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selected, setSelected] = useState<CardView | null>(null);
   const [newTitles, setNewTitles] = useState<Record<string, string>>({});
+  const [columnNames, setColumnNames] = useState<Record<string, string>>({});
+  const [newColumnName, setNewColumnName] = useState("");
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -115,6 +117,64 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprint
   }, [columns]);
 
   const columnIds = columns.map((c) => c.id);
+
+  function columnTitle(col: ColumnView) {
+    return columnNames[col.id] ?? col.name;
+  }
+
+  function saveColumnName(columnId: string) {
+    const name = (columnNames[columnId] ?? columns.find((c) => c.id === columnId)?.name ?? "").trim();
+    if (!name) return;
+    startTransition(async () => {
+      await renameColumn(boardId, columnId, name, devUser);
+      router.refresh();
+    });
+  }
+
+  function removeColumn(columnId: string) {
+    const col = columns.find((c) => c.id === columnId);
+    if (!col) return;
+    if (col.cards.length > 0) {
+      alert("カードがある列は削除できません");
+      return;
+    }
+    if (columns.length <= 1) {
+      alert("最後の列は削除できません");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await deleteColumn(boardId, columnId, devUser);
+        router.refresh();
+      } catch (e) {
+        console.error(e);
+        alert("列の削除に失敗しました");
+        router.refresh();
+      }
+    });
+  }
+
+  function moveColumn(columnId: string, dir: -1 | 1) {
+    const idx = columnIds.indexOf(columnId);
+    const next = idx + dir;
+    if (idx < 0 || next < 0 || next >= columnIds.length) return;
+    const ids = [...columnIds];
+    [ids[idx], ids[next]] = [ids[next], ids[idx]];
+    startTransition(async () => {
+      await reorderColumns(boardId, ids, devUser);
+      router.refresh();
+    });
+  }
+
+  function addColumn() {
+    const name = newColumnName.trim();
+    if (!name) return;
+    startTransition(async () => {
+      await createColumn(boardId, name, devUser);
+      setNewColumnName("");
+      router.refresh();
+    });
+  }
 
   function onDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
@@ -231,7 +291,35 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprint
                   padding: "0.75rem",
                 }}
               >
-                <h3 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem" }}>{col.name}</h3>
+                <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", marginBottom: "0.75rem" }}>
+                  {!readOnly ? (
+                    <>
+                      <input
+                        value={columnTitle(col)}
+                        onChange={(e) => setColumnNames((prev) => ({ ...prev, [col.id]: e.target.value }))}
+                        onBlur={() => saveColumnName(col.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        style={{ flex: 1, fontSize: "0.95rem", fontWeight: 600, padding: "0.2rem 0.35rem" }}
+                        aria-label="列名"
+                      />
+                      <button type="button" className="btn btn-secondary" onClick={() => moveColumn(col.id, -1)} disabled={pending || columnIds[0] === col.id} title="左へ">
+                        ←
+                      </button>
+                      <button type="button" className="btn btn-secondary" onClick={() => moveColumn(col.id, 1)} disabled={pending || columnIds[columnIds.length - 1] === col.id} title="右へ">
+                        →
+                      </button>
+                      <button type="button" className="btn btn-secondary" onClick={() => removeColumn(col.id)} disabled={pending} title="列を削除">
+                        ×
+                      </button>
+                    </>
+                  ) : (
+                    <h3 style={{ margin: 0, fontSize: "0.95rem" }}>{col.name}</h3>
+                  )}
+                </div>
                 <SortableContext items={col.cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                   {col.cards.map((card) => (
                     <SortableCard key={card.id} card={card} readOnly={readOnly} onSelect={setSelected} />
@@ -256,6 +344,25 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprint
               </div>
             </ColumnDrop>
           ))}
+          {!readOnly ? (
+            <div style={{ minWidth: 220, background: "#ebecf0", borderRadius: 8, padding: "0.75rem" }}>
+              <p style={{ margin: "0 0 0.5rem", fontSize: "0.9rem" }}>列を追加</p>
+              <div style={{ display: "flex", gap: "0.35rem" }}>
+                <input
+                  value={newColumnName}
+                  onChange={(e) => setNewColumnName(e.target.value)}
+                  placeholder="列名"
+                  style={{ flex: 1, padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addColumn();
+                  }}
+                />
+                <button type="button" onClick={addColumn} disabled={pending}>
+                  +
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
         <DragOverlay>
           {activeCard ? (

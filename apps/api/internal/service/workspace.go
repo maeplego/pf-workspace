@@ -566,6 +566,69 @@ func (s *Service) UnarchiveBoard(sub, boardID string) error {
 	return s.store.UnarchiveBoard(boardID)
 }
 
+func (s *Service) CreateColumn(sub, boardID, name string) (domain.Column, error) {
+	wsID, err := s.store.BoardWorkspaceID(boardID)
+	if err != nil {
+		return domain.Column{}, err
+	}
+	if err := s.requireWrite(wsID, sub); err != nil {
+		return domain.Column{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > domain.MaxColumnName {
+		return domain.Column{}, domain.ErrInvalid
+	}
+	return s.store.CreateColumn(boardID, name, s.now().UTC())
+}
+
+func (s *Service) RenameColumn(sub, columnID, name string) (domain.Column, error) {
+	boardID, err := s.store.ColumnBoardID(columnID)
+	if err != nil {
+		return domain.Column{}, err
+	}
+	wsID, err := s.store.BoardWorkspaceID(boardID)
+	if err != nil {
+		return domain.Column{}, err
+	}
+	if err := s.requireWrite(wsID, sub); err != nil {
+		return domain.Column{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > domain.MaxColumnName {
+		return domain.Column{}, domain.ErrInvalid
+	}
+	return s.store.RenameColumn(columnID, name)
+}
+
+func (s *Service) DeleteColumn(sub, columnID string) error {
+	boardID, err := s.store.ColumnBoardID(columnID)
+	if err != nil {
+		return err
+	}
+	wsID, err := s.store.BoardWorkspaceID(boardID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireWrite(wsID, sub); err != nil {
+		return err
+	}
+	return s.store.DeleteColumn(columnID)
+}
+
+func (s *Service) ReorderColumns(sub, boardID string, columnIDs []string) error {
+	wsID, err := s.store.BoardWorkspaceID(boardID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireWrite(wsID, sub); err != nil {
+		return err
+	}
+	if len(columnIDs) == 0 {
+		return domain.ErrInvalid
+	}
+	return s.store.ReorderColumns(boardID, columnIDs)
+}
+
 func (s *Service) ListBoards(sub, wsID string) ([]domain.Board, error) {
 	if err := s.requireRead(wsID, sub); err != nil {
 		return nil, err

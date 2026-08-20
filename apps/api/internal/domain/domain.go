@@ -98,6 +98,7 @@ const (
 	MaxPageTitle        = 160
 	MaxPageBody         = 100000
 	MaxChannelName      = 80
+	MaxColumnName       = 80
 	MaxChatMessage      = 4000
 	DefaultChannelName  = "general"
 	MaxUploadBytes      = 20 * 1024 * 1024

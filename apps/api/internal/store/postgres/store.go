@@ -605,6 +605,144 @@ func (s *Store) ColumnBoardID(columnID string) (string, error) {
 	return boardID, nil
 }
 
+func (s *Store) CreateColumn(boardID, name string, now time.Time) (domain.Column, error) {
+	ctx := context.Background()
+	var n int
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM boards WHERE id = $1", boardID).Scan(&n); err != nil {
+		return domain.Column{}, mapErr(err)
+	}
+	var pos int
+	if err := s.db().QueryRow(ctx, "SELECT COALESCE(MAX(position), -1) + 1 FROM columns WHERE board_id = $1", boardID).Scan(&pos); err != nil {
+		return domain.Column{}, err
+	}
+	col := domain.Column{ID: id.New(), BoardID: boardID, Name: name, Position: pos, CreatedAt: now}
+	_, err := s.db().exec(ctx, "INSERT INTO columns (id, board_id, name, position, created_at) VALUES ($1,$2,$3,$4,$5)",
+		col.ID, col.BoardID, col.Name, col.Position, col.CreatedAt)
+	if err != nil {
+		return domain.Column{}, err
+	}
+	return col, nil
+}
+
+func (s *Store) RenameColumn(columnID, name string) (domain.Column, error) {
+	ctx := context.Background()
+	tag, err := s.db().exec(ctx, "UPDATE columns SET name = $2 WHERE id = $1", columnID, name)
+	if err != nil {
+		return domain.Column{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.Column{}, domain.ErrNotFound
+	}
+	var col domain.Column
+	err = s.db().QueryRow(ctx, "SELECT id, board_id, name, position, created_at FROM columns WHERE id = $1", columnID).
+		Scan(&col.ID, &col.BoardID, &col.Name, &col.Position, &col.CreatedAt)
+	if err != nil {
+		return domain.Column{}, mapErr(err)
+	}
+	return col, nil
+}
+
+func (s *Store) DeleteColumn(columnID string) error {
+	ctx := context.Background()
+	var boardID string
+	if err := s.db().QueryRow(ctx, "SELECT board_id FROM columns WHERE id = $1", columnID).Scan(&boardID); err != nil {
+		return mapErr(err)
+	}
+	var cards int
+	if err := s.db().QueryRow(ctx, "SELECT COUNT(*) FROM cards WHERE column_id = $1", columnID).Scan(&cards); err != nil {
+		return err
+	}
+	if cards > 0 {
+		return domain.ErrInvalid
+	}
+	var colCount int
+	if err := s.db().QueryRow(ctx, "SELECT COUNT(*) FROM columns WHERE board_id = $1", boardID).Scan(&colCount); err != nil {
+		return err
+	}
+	if colCount <= 1 {
+		return domain.ErrForbidden
+	}
+	tx, err := s.db().begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "DELETE FROM columns WHERE id = $1", columnID); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, "SELECT id FROM columns WHERE board_id = $1 ORDER BY position, id", boardID)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i, id := range ids {
+		if _, err := tx.Exec(ctx, "UPDATE columns SET position = $2 WHERE id = $1", id, i); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) ReorderColumns(boardID string, columnIDs []string) error {
+	ctx := context.Background()
+	var n int
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM boards WHERE id = $1", boardID).Scan(&n); err != nil {
+		return mapErr(err)
+	}
+	rows, err := s.db().Query(ctx, "SELECT id FROM columns WHERE board_id = $1", boardID)
+	if err != nil {
+		return err
+	}
+	current := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		current[id] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(current) != len(columnIDs) {
+		return domain.ErrInvalid
+	}
+	for _, id := range columnIDs {
+		if !current[id] {
+			return domain.ErrInvalid
+		}
+		delete(current, id)
+	}
+	if len(current) != 0 {
+		return domain.ErrInvalid
+	}
+	tx, err := s.db().begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for i, id := range columnIDs {
+		if _, err := tx.Exec(ctx, "UPDATE columns SET position = $2 WHERE id = $1 AND board_id = $3", id, i, boardID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) CreateCard(columnID, title, description string, now time.Time) (domain.Card, error) {
 	ctx := context.Background()
 	var boardID, colName string
