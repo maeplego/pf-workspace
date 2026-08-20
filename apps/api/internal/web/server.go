@@ -209,6 +209,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.revokeInvitation(w, u.Sub, wsID, inviteID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.Contains(r.URL.Path, "/invitations/") && strings.HasSuffix(r.URL.Path, "/resend"):
+		rest := strings.TrimPrefix(r.URL.Path, "/v1/workspaces/")
+		rest = strings.TrimSuffix(rest, "/resend")
+		wsID, inviteID, ok := strings.Cut(rest, "/invitations/")
+		if !ok || wsID == "" || inviteID == "" {
+			http.NotFound(w, r)
+			return
+		}
+		s.resendInvitation(w, u.Sub, wsID, inviteID)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/invitations"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/invitations")
 		s.listInvitations(w, u.Sub, wsID)
@@ -419,6 +428,18 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, actorSub, wsID, inviteI
 		return
 	}
 	writeJSON(w, http.StatusOK, inv)
+}
+
+func (s *Server) resendInvitation(w http.ResponseWriter, actorSub, wsID, inviteID string) {
+	inv, token, err := s.svc.ResendInvitation(actorSub, wsID, inviteID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"invitation": inv,
+		"token":      token,
+	})
 }
 
 func (s *Server) previewInvitation(w http.ResponseWriter, sub, token string) {

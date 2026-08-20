@@ -2,7 +2,7 @@ import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, createBoard, createInvitation, createWorkspace, revokeInvitation, syncMemberDisplayName, unarchiveBoard } from "./actions";
+import { apiFetchForPage, createBoard, createInvitation, createWorkspace, resendInvitation, revokeInvitation, syncMemberDisplayName, unarchiveBoard } from "./actions";
 import { ambiguousDisplayNames, memberLabel } from "../lib/display";
 import { oidcEnabled } from "../lib/oidc/env";
 import { getWorkspaceSession } from "../lib/session";
@@ -34,7 +34,7 @@ function homeHref(devUser?: string) {
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ user?: string; error?: string; createdInvite?: string }>;
+  searchParams: Promise<{ user?: string; error?: string; createdInvite?: string; resentInvite?: string }>;
 }) {
   noStore();
   const sp = await searchParams;
@@ -112,6 +112,18 @@ export default async function HomePage({
     await revokeInvitation(wsId, invitationId, devUser);
   }
 
+  async function resendInvitationAction(formData: FormData) {
+    "use server";
+    const wsId = String(formData.get("workspaceId") || "");
+    const invitationId = String(formData.get("invitationId") || "");
+    if (!wsId || !invitationId) return;
+    const token = await resendInvitation(wsId, invitationId, devUser);
+    const q = new URLSearchParams();
+    if (devUser) q.set("user", devUser);
+    q.set("resentInvite", token);
+    redirect(`/?${q.toString()}`);
+  }
+
   return (
     <>
       <section className="hero">
@@ -140,6 +152,14 @@ export default async function HomePage({
             招待リンクを発行しました:{" "}
             <code style={{ userSelect: "all" }}>
               {`${process.env.WORKSPACE_PUBLIC_BASE_URL || "http://localhost:3005"}/join/${sp.createdInvite}`}
+            </code>
+          </p>
+        ) : null}
+        {sp.resentInvite ? (
+          <p className="muted">
+            招待リンクを再発行しました:{" "}
+            <code style={{ userSelect: "all" }}>
+              {`${process.env.WORKSPACE_PUBLIC_BASE_URL || "http://localhost:3005"}/join/${sp.resentInvite}`}
             </code>
           </p>
         ) : null}
@@ -252,13 +272,22 @@ export default async function HomePage({
                           {inv.invitedEmail ? ` · ${inv.invitedEmail}` : ""}
                         </span>
                         {status === "active" ? (
-                          <form action={revokeInvitationAction} className="row" style={{ display: "inline-flex", marginLeft: "0.5rem" }}>
-                            <input type="hidden" name="workspaceId" value={ws.id} />
-                            <input type="hidden" name="invitationId" value={inv.id} />
-                            <button type="submit" className="btn btn-secondary">
-                              取り消し
-                            </button>
-                          </form>
+                          <>
+                            <form action={resendInvitationAction} className="row" style={{ display: "inline-flex", marginLeft: "0.5rem" }}>
+                              <input type="hidden" name="workspaceId" value={ws.id} />
+                              <input type="hidden" name="invitationId" value={inv.id} />
+                              <button type="submit" className="btn btn-secondary">
+                                再送
+                              </button>
+                            </form>
+                            <form action={revokeInvitationAction} className="row" style={{ display: "inline-flex", marginLeft: "0.35rem" }}>
+                              <input type="hidden" name="workspaceId" value={ws.id} />
+                              <input type="hidden" name="invitationId" value={inv.id} />
+                              <button type="submit" className="btn btn-secondary">
+                                取り消し
+                              </button>
+                            </form>
+                          </>
                         ) : null}
                       </li>
                     );

@@ -203,6 +203,16 @@ export async function revokeInvitation(workspaceId: string, invitationId: string
   revalidatePath("/");
 }
 
+export async function resendInvitation(workspaceId: string, invitationId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  const data = (await apiFetch(`/v1/workspaces/${workspaceId}/invitations/${invitationId}/resend`, session, {
+    method: "POST",
+    body: "{}",
+  })) as { token: string };
+  revalidatePath("/");
+  return data.token;
+}
+
 export async function previewInvitation(token: string, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
   return apiFetch(`/v1/invitations/${encodeURIComponent(token)}`, session) as Promise<{

@@ -1749,6 +1749,107 @@ func TestInvitationRevoke(t *testing.T) {
 	}
 }
 
+func TestInvitationResend(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Resend WS"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/invitations", map[string]any{
+		"role": "member", "maxUses": 1, "ttlHours": 24, "invitedEmail": "guest@example.com",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		Token      string `json:"token"`
+		Invitation struct {
+			ID string `json:"id"`
+		} `json:"invitation"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/invitations/"+created.Invitation.ID+"/resend", map[string]string{}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("resend %d", res.StatusCode)
+	}
+	var resent struct {
+		Token      string `json:"token"`
+		Invitation struct {
+			ID string `json:"id"`
+		} `json:"invitation"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&resent); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if resent.Token == "" || resent.Token == created.Token {
+		t.Fatal("resend should issue a new token")
+	}
+	if resent.Invitation.ID == "" || resent.Invitation.ID == created.Invitation.ID {
+		t.Fatal("resend should create a new invitation row")
+	}
+
+	res, err = client.Do(authReqDev(t, http.MethodPost, ts.URL+"/v1/invitations/"+created.Token+"/accept", map[string]string{}, "guest-legacy", "guest@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("old token accept %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReqDev(t, http.MethodPost, ts.URL+"/v1/invitations/"+resent.Token+"/accept", map[string]string{}, "guest-new", "guest@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("resent token accept %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/audit-events", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audits struct {
+		Events []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&audits); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	found := false
+	for _, ev := range audits.Events {
+		if ev.Type == "workspace.invitation.resent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected workspace.invitation.resent audit event")
+	}
+}
+
 func TestArchiveTrashAndChannelKept(t *testing.T) {
 	ts := testServer(t)
 	defer ts.Close()

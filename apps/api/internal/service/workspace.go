@@ -228,6 +228,47 @@ func (s *Service) RevokeInvitation(actorSub, wsID, inviteID string) (domain.Invi
 	return inv, nil
 }
 
+func (s *Service) ResendInvitation(actorSub, wsID, inviteID string) (domain.Invitation, string, error) {
+	if strings.TrimSpace(inviteID) == "" {
+		return domain.Invitation{}, "", domain.ErrInvalid
+	}
+	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
+		return domain.Invitation{}, "", err
+	}
+	invitations, err := s.store.ListInvitations(wsID)
+	if err != nil {
+		return domain.Invitation{}, "", err
+	}
+	var base domain.Invitation
+	found := false
+	for _, inv := range invitations {
+		if inv.ID == inviteID {
+			base = inv
+			found = true
+			break
+		}
+	}
+	if !found {
+		return domain.Invitation{}, "", domain.ErrNotFound
+	}
+	ttlHours := int(base.ExpiresAt.Sub(base.CreatedAt).Hours())
+	if ttlHours <= 0 {
+		ttlHours = 72
+	}
+	if ttlHours > 24*14 {
+		ttlHours = 24 * 14
+	}
+	inv, token, err := s.CreateInvitation(actorSub, wsID, base.Role, base.InvitedEmail, base.MaxUses, ttlHours)
+	if err != nil {
+		return domain.Invitation{}, "", err
+	}
+	now := s.now().UTC()
+	_ = s.store.AddAuditEvent(domain.AuditEvent{
+		ID: id.New(), WorkspaceID: wsID, ActorSub: actorSub, Type: "workspace.invitation.resent", InviteID: inv.ID, CreatedAt: now,
+	})
+	return inv, token, nil
+}
+
 func (s *Service) PreviewInvitation(sub, rawToken string) (domain.Invitation, domain.Workspace, error) {
 	if strings.TrimSpace(sub) == "" || strings.TrimSpace(rawToken) == "" {
 		return domain.Invitation{}, domain.Workspace{}, domain.ErrInvalid
