@@ -2,8 +2,9 @@ import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, createBoard, createInvitation, createWorkspace, resendInvitation, revokeInvitation, searchOrgMembers, syncMemberDisplayName, unarchiveBoard, updateInvitationPolicy } from "./actions";
+import { apiFetchForPage, createBoard, createInvitation, createWorkspace, resendInvitation, revokeInvitation, searchOrgMembers, switchActiveOrg, syncMemberDisplayName, unarchiveBoard, updateInvitationPolicy } from "./actions";
 import { InviteEmailField } from "./InviteEmailField";
+import { OrgSwitcher } from "./OrgSwitcher";
 import { ambiguousDisplayNames, memberLabel } from "../lib/display";
 import { oidcEnabled } from "../lib/oidc/env";
 import { getWorkspaceSession } from "../lib/session";
@@ -142,6 +143,12 @@ export default async function HomePage({
     redirect(devUser ? `/?user=${encodeURIComponent(devUser)}` : "/");
   }
 
+  async function switchOrgAction(orgId: string) {
+    "use server";
+    await switchActiveOrg(orgId, devUser);
+    redirect(devUser ? `/?user=${encodeURIComponent(devUser)}` : "/");
+  }
+
   return (
     <>
       <section className="hero">
@@ -150,6 +157,11 @@ export default async function HomePage({
           <span>
             ユーザー: <strong>{session!.displayName || session!.sub}</strong>
           </span>
+          <OrgSwitcher
+            currentOrgId={session!.orgId}
+            organizations={session!.organizations || []}
+            onSwitch={switchOrgAction}
+          />
           {session!.devMode ? (
             <>
               <Link href={homeHref("demo-user-a")}>A</Link>
