@@ -2,7 +2,8 @@ import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, createBoard, createInvitation, createWorkspace, resendInvitation, revokeInvitation, syncMemberDisplayName, unarchiveBoard, updateInvitationPolicy } from "./actions";
+import { apiFetchForPage, createBoard, createInvitation, createWorkspace, resendInvitation, revokeInvitation, searchOrgMembers, syncMemberDisplayName, unarchiveBoard, updateInvitationPolicy } from "./actions";
+import { InviteEmailField } from "./InviteEmailField";
 import { ambiguousDisplayNames, memberLabel } from "../lib/display";
 import { oidcEnabled } from "../lib/oidc/env";
 import { getWorkspaceSession } from "../lib/session";
@@ -19,6 +20,7 @@ type Invitation = {
   invitedEmail?: string;
   revokedAt?: string | null;
 };
+type OrgMember = { sub: string; role: string; email?: string; displayName?: string };
 
 function invitationStatus(inv: Invitation): string {
   if (inv.revokedAt) return "revoked";
@@ -52,6 +54,7 @@ export default async function HomePage({
   const archivedByWs: Record<string, Board[]> = {};
   const membersByWs: Record<string, Member[]> = {};
   const invitationsByWs: Record<string, Invitation[]> = {};
+  const orgMembersByWs: Record<string, OrgMember[]> = {};
   for (const ws of workspaces) {
     try {
       await syncMemberDisplayName(ws.id, displayName, devUser);
@@ -77,6 +80,12 @@ export default async function HomePage({
         invitationsByWs[ws.id] = invPayload.invitations ?? [];
       } catch {
         invitationsByWs[ws.id] = [];
+      }
+      try {
+        const membersPayload = await searchOrgMembers("", devUser);
+        orgMembersByWs[ws.id] = membersPayload.members ?? [];
+      } catch {
+        orgMembersByWs[ws.id] = [];
       }
     }
   }
@@ -262,7 +271,7 @@ export default async function HomePage({
                 </select>
                 <input name="maxUses" type="number" min={1} max={100} defaultValue={1} style={{ width: 100 }} />
                 <input name="ttlHours" type="number" min={1} max={336} defaultValue={72} style={{ width: 100 }} />
-                <input name="invitedEmail" type="email" placeholder="招待先メール（任意）" style={{ width: 220 }} />
+                <InviteEmailField listId={`org-members-${ws.id}`} members={orgMembersByWs[ws.id] || []} />
                 <button type="submit" className="btn btn-secondary">
                   招待リンク発行
                 </button>

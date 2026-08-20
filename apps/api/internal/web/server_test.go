@@ -50,6 +50,14 @@ func authReqDev(t *testing.T, method, url string, body any, sub, email string) *
 	return req
 }
 
+func authReqDevOrg(t *testing.T, method, url string, body any, sub, email, org string) *http.Request {
+	req := authReqDev(t, method, url, body, sub, email)
+	if org != "" {
+		req.Header.Set("X-Dev-User-Org", org)
+	}
+	return req
+}
+
 func TestWorkspaceAndKanbanFlow(t *testing.T) {
 	ts := testServer(t)
 	defer ts.Close()
@@ -1975,6 +1983,60 @@ func TestInvitationPolicyUpdate(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected workspace.invitation.policy_updated audit event")
+	}
+}
+
+func TestOrgMembersDevFallback(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReqDevOrg(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Org WS"}, "owner-org", "owner@example.com", "org-demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReqDevOrg(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/members", map[string]string{"sub": "guest-org", "role": "guest"}, "owner-org", "owner@example.com", "org-demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("add member status %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReqDevOrg(t, http.MethodGet, ts.URL+"/v1/org-members?q=guest", nil, "owner-org", "owner@example.com", "org-demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("org-members status %d", res.StatusCode)
+	}
+	var payload struct {
+		Members []struct {
+			Sub string `json:"sub"`
+		} `json:"members"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	found := false
+	for _, m := range payload.Members {
+		if m.Sub == "guest-org" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected guest-org in %+v", payload.Members)
 	}
 }
 

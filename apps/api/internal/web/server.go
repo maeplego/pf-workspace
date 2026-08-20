@@ -157,6 +157,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.createWorkspace(w, r, u)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces":
 		s.listWorkspaces(w, r, u.Sub)
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/org-members":
+		s.orgMembers(w, r, u)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/chat-tickets":
 		s.issueChatTicket(w, r, u.Sub)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/channels"):

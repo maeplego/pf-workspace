@@ -42,6 +42,14 @@ export async function apiFetchForPage(path: string, devUser?: string) {
   return apiFetch(path, session);
 }
 
+export async function searchOrgMembers(q: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  const query = encodeURIComponent(q.trim());
+  return apiFetch(`/v1/org-members?q=${query}`, session) as Promise<{
+    members: { sub: string; role: string; email?: string; displayName?: string }[];
+  }>;
+}
+
 export async function createWorkspace(formData: FormData, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
   const name = String(formData.get("name") || "").trim();
