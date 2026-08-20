@@ -173,6 +173,9 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/channels/") && strings.HasSuffix(r.URL.Path, "/messages"):
 		channelID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/channels/"), "/messages")
 		s.listMessages(w, r, u.Sub, channelID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/channels/") && strings.HasSuffix(r.URL.Path, "/read"):
+		channelID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/channels/"), "/read")
+		s.markChannelRead(w, r, u.Sub, channelID)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/collab-tickets":
 		s.issueCollabTicket(w, r, u.Sub)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/pages/tree"):
@@ -978,7 +981,26 @@ func (s *Server) listChannels(w http.ResponseWriter, r *http.Request, sub, wsID 
 		writeErr(w, err)
 		return
 	}
+	if chs == nil {
+		chs = []domain.ChannelView{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"channels": chs})
+}
+
+func (s *Server) markChannelRead(w http.ResponseWriter, r *http.Request, sub, channelID string) {
+	var body struct {
+		LastSeq int `json:"lastSeq"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
+		return
+	}
+	view, err := s.ts(r.Context()).MarkChannelRead(sub, channelID, body.LastSeq)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, sub, channelID string) {

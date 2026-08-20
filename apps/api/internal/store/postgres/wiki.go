@@ -447,6 +447,56 @@ func (s *Store) ListMessages(channelID string, afterSeq int) ([]domain.ChatMessa
 	return out, rows.Err()
 }
 
+func (s *Store) CountMessagesAfter(channelID string, afterSeq int) (int, error) {
+	ctx := context.Background()
+	var n int
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM channels WHERE id = $1", channelID).Scan(&n); err != nil {
+		return 0, mapErr(err)
+	}
+	var count int
+	err := s.db().QueryRow(ctx, `SELECT COUNT(*) FROM chat_messages WHERE channel_id = $1 AND seq > $2`, channelID, afterSeq).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *Store) GetChannelRead(channelID, sub string) (int, error) {
+	ctx := context.Background()
+	var n int
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM channels WHERE id = $1", channelID).Scan(&n); err != nil {
+		return 0, mapErr(err)
+	}
+	var seq int
+	err := s.db().QueryRow(ctx, `SELECT last_read_seq FROM channel_reads WHERE channel_id = $1 AND sub = $2`, channelID, sub).Scan(&seq)
+	if err != nil {
+		if mapErr(err) == domain.ErrNotFound {
+			return 0, nil
+		}
+		return 0, mapErr(err)
+	}
+	return seq, nil
+}
+
+func (s *Store) UpsertChannelRead(channelID, sub string, lastReadSeq int, now time.Time) error {
+	ctx := context.Background()
+	if lastReadSeq < 0 {
+		return domain.ErrInvalid
+	}
+	var n int
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM channels WHERE id = $1", channelID).Scan(&n); err != nil {
+		return mapErr(err)
+	}
+	_, err := s.db().exec(ctx, `
+		INSERT INTO channel_reads (channel_id, sub, last_read_seq, updated_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (channel_id, sub) DO UPDATE
+		SET last_read_seq = GREATEST(channel_reads.last_read_seq, EXCLUDED.last_read_seq),
+		    updated_at = EXCLUDED.updated_at`,
+		channelID, sub, lastReadSeq, now)
+	return err
+}
+
 func (s *Store) CreateChatTicket(sub, channelID string, readOnly bool, now time.Time) domain.ChatTicket {
 	t := domain.ChatTicket{ID: id.New(), Sub: sub, ChannelID: channelID, ReadOnly: readOnly, ExpiresAt: now.Add(domain.CollabTicketTTL)}
 	_, _ = s.db().exec(context.Background(), `INSERT INTO chat_tickets (id, sub, channel_id, read_only, expires_at) VALUES ($1,$2,$3,$4,$5)`,

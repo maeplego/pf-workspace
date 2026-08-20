@@ -68,6 +68,9 @@ type Store interface {
 	GetChannel(channelID string) (domain.Channel, error)
 	AppendMessage(channelID, sub, body string, mentions []string, attachmentFileID string, now time.Time) (domain.ChatMessage, error)
 	ListMessages(channelID string, afterSeq int) ([]domain.ChatMessage, error)
+	CountMessagesAfter(channelID string, afterSeq int) (int, error)
+	GetChannelRead(channelID, sub string) (int, error)
+	UpsertChannelRead(channelID, sub string, lastReadSeq int, now time.Time) error
 	CreateChatTicket(sub, channelID string, readOnly bool, now time.Time) domain.ChatTicket
 	GetChatTicket(ticketID string) (domain.ChatTicket, error)
 

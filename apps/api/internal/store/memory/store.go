@@ -30,6 +30,7 @@ type Store struct {
 	collabIndex  map[string]collabRef
 	channels     map[string]domain.Channel
 	messages     map[string][]domain.ChatMessage // channelID -> ordered
+	chatReads    map[string]map[string]int       // channelID -> sub -> lastReadSeq
 	chatTickets  map[string]domain.ChatTicket
 	files        map[string]domain.StoredFile
 	pageFiles    map[string][]string // pageID -> fileIDs
@@ -61,6 +62,7 @@ func New() *Store {
 		collabIndex:  make(map[string]collabRef),
 		channels:     make(map[string]domain.Channel),
 		messages:     make(map[string][]domain.ChatMessage),
+		chatReads:    make(map[string]map[string]int),
 		chatTickets:  make(map[string]domain.ChatTicket),
 		files:        make(map[string]domain.StoredFile),
 		pageFiles:    make(map[string][]string),
@@ -1116,6 +1118,55 @@ func (s *Store) ListMessages(channelID string, afterSeq int) ([]domain.ChatMessa
 		}
 	}
 	return out, nil
+}
+
+func (s *Store) CountMessagesAfter(channelID string, afterSeq int) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.channels[channelID]; !ok {
+		return 0, domain.ErrNotFound
+	}
+	n := 0
+	for _, m := range s.messages[channelID] {
+		if m.Seq > afterSeq {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (s *Store) GetChannelRead(channelID, sub string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.channels[channelID]; !ok {
+		return 0, domain.ErrNotFound
+	}
+	bySub := s.chatReads[channelID]
+	if bySub == nil {
+		return 0, nil
+	}
+	return bySub[sub], nil
+}
+
+func (s *Store) UpsertChannelRead(channelID, sub string, lastReadSeq int, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.channels[channelID]; !ok {
+		return domain.ErrNotFound
+	}
+	if lastReadSeq < 0 {
+		return domain.ErrInvalid
+	}
+	bySub := s.chatReads[channelID]
+	if bySub == nil {
+		bySub = make(map[string]int)
+		s.chatReads[channelID] = bySub
+	}
+	if lastReadSeq > bySub[sub] {
+		bySub[sub] = lastReadSeq
+	}
+	_ = now
+	return nil
 }
 
 func (s *Store) CreateChatTicket(sub, channelID string, readOnly bool, now time.Time) domain.ChatTicket {

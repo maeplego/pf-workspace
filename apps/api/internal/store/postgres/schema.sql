@@ -167,6 +167,16 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS chat_messages_channel_id_idx ON chat_messages (channel_id);
 
+CREATE TABLE IF NOT EXISTS channel_reads (
+  channel_id TEXT NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+  sub TEXT NOT NULL,
+  last_read_seq INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (channel_id, sub)
+);
+
+CREATE INDEX IF NOT EXISTS channel_reads_sub_idx ON channel_reads (sub);
+
 CREATE TABLE IF NOT EXISTS chat_tickets (
   id TEXT PRIMARY KEY,
   sub TEXT NOT NULL,
@@ -349,6 +359,27 @@ CREATE POLICY chat_messages_tenant ON chat_messages
       SELECT 1 FROM channels c
       JOIN workspaces w ON w.id = c.workspace_id
       WHERE c.id = chat_messages.channel_id AND app_tenant_matches(w.org_id)
+    )
+  );
+
+ALTER TABLE channel_reads ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS channel_reads_tenant ON channel_reads;
+CREATE POLICY channel_reads_tenant ON channel_reads
+  FOR ALL
+  USING (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM channels c
+      JOIN workspaces w ON w.id = c.workspace_id
+      WHERE c.id = channel_reads.channel_id AND app_tenant_matches(w.org_id)
+    )
+  )
+  WITH CHECK (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM channels c
+      JOIN workspaces w ON w.id = c.workspace_id
+      WHERE c.id = channel_reads.channel_id AND app_tenant_matches(w.org_id)
     )
   );
 

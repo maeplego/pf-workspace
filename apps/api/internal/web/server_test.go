@@ -734,6 +734,109 @@ func TestChatHistoryAndSeq(t *testing.T) {
 	}
 }
 
+func TestChannelUnreadAndMarkRead(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Unread"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/members", map[string]string{"sub": "member-1", "role": "member"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/channels", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chs struct {
+		Channels []struct {
+			ID string `json:"id"`
+		} `json:"channels"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&chs); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if len(chs.Channels) == 0 {
+		t.Fatal("expected general channel")
+	}
+	chID := chs.Channels[0].ID
+
+	for _, body := range []string{"one", "two", "three"} {
+		res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/channels/"+chID+"/messages", map[string]string{"body": body}, "owner-1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.StatusCode != http.StatusCreated {
+			t.Fatalf("post: %d", res.StatusCode)
+		}
+		_ = res.Body.Close()
+	}
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/channels", nil, "member-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed struct {
+		Channels []struct {
+			ID          string `json:"id"`
+			UnreadCount int    `json:"unreadCount"`
+			LastReadSeq int    `json:"lastReadSeq"`
+		} `json:"channels"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if listed.Channels[0].UnreadCount != 3 || listed.Channels[0].LastReadSeq != 0 {
+		t.Fatalf("want unread=3 lastRead=0 got %+v", listed.Channels[0])
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/channels/"+chID+"/read", map[string]int{"lastSeq": 2}, "member-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("mark read: %d", res.StatusCode)
+	}
+	var marked struct {
+		UnreadCount int `json:"unreadCount"`
+		LastReadSeq int `json:"lastReadSeq"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&marked); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if marked.LastReadSeq != 2 || marked.UnreadCount != 1 {
+		t.Fatalf("after mark %+v", marked)
+	}
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/channels/"+chID+"/read", map[string]int{"lastSeq": 1}, "member-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&marked); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if marked.LastReadSeq != 2 {
+		t.Fatalf("read cursor must be monotonic, got %d", marked.LastReadSeq)
+	}
+}
+
 func TestSearchACLAndTypes(t *testing.T) {
 	ts := testServer(t)
 	defer ts.Close()

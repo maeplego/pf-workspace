@@ -1,8 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { apiFetchForPage, postMessage, uploadWorkspaceFile } from "../app/actions";
+import { apiFetchForPage, markChannelRead, postMessage, uploadWorkspaceFile } from "../app/actions";
 
 export type ChatMsg = {
   id: string;
@@ -76,6 +77,7 @@ export function ChatRoom({
   readOnly,
   devUser,
 }: Props) {
+  const router = useRouter();
   const [messages, setMessages] = useState(initial);
   const [status, setStatus] = useState("connecting");
   const [typing, setTyping] = useState<string[]>([]);
@@ -86,17 +88,36 @@ export function ChatRoom({
   const listRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const typingGate = useRef(false);
+  const markedSeq = useRef(0);
 
   useEffect(() => {
     lastSeq.current = initial.reduce((m, x) => Math.max(m, x.seq), 0);
+    markedSeq.current = 0;
     setMessages(initial);
   }, [initial]);
+
+  const syncRead = useCallback(
+    async (seq: number) => {
+      if (seq <= 0 || seq <= markedSeq.current) return;
+      markedSeq.current = seq;
+      try {
+        await markChannelRead(channelId, seq, devUser);
+        router.refresh();
+      } catch {
+        markedSeq.current = Math.min(markedSeq.current, seq - 1);
+      }
+    },
+    [channelId, devUser, router],
+  );
 
   const catchUp = useCallback(async () => {
     const data = (await apiFetchForPage(`/v1/channels/${channelId}/messages?afterSeq=${lastSeq.current}`, devUser)) as {
       messages: ChatMsg[];
     };
-    if (!data.messages?.length) return;
+    if (!data.messages?.length) {
+      await syncRead(lastSeq.current);
+      return;
+    }
     setMessages((prev) => {
       const seen = new Set(prev.map((m) => m.id));
       const extra = data.messages.filter((m) => !seen.has(m.id));
@@ -105,7 +126,8 @@ export function ChatRoom({
       }
       return extra.length ? [...prev, ...extra] : prev;
     });
-  }, [channelId, devUser]);
+    await syncRead(lastSeq.current);
+  }, [channelId, devUser, syncRead]);
 
   useEffect(() => {
     const url = `${wsBase}?ticket=${encodeURIComponent(ticket)}&channelId=${encodeURIComponent(channelId)}`;
@@ -129,6 +151,7 @@ export function ChatRoom({
           if (data.type === "message" && data.message && data.message.seq > lastSeq.current) {
             lastSeq.current = data.message.seq;
             setMessages((prev) => (prev.some((m) => m.id === data.message!.id) ? prev : [...prev, data.message!]));
+            void syncRead(data.message.seq);
           }
           if (data.type === "typing" && data.sub && data.sub !== userSub) {
             const sub = data.sub;
@@ -154,11 +177,15 @@ export function ChatRoom({
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [channelId, ticket, wsBase, userSub, catchUp]);
+  }, [channelId, ticket, wsBase, userSub, catchUp, syncRead]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages]);
+
+  useEffect(() => {
+    void syncRead(lastSeq.current);
+  }, [channelId, syncRead]);
 
   function sendTyping() {
     if (readOnly || typingGate.current) return;
@@ -196,6 +223,7 @@ export function ChatRoom({
       if (msg.seq >= lastSeq.current) {
         lastSeq.current = msg.seq;
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+        await syncRead(msg.seq);
       }
       setDraft("");
       setFile(null);

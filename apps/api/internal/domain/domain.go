@@ -176,6 +176,13 @@ type Channel struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// ChannelView is a channel plus the caller's read cursor / unread count.
+type ChannelView struct {
+	Channel
+	LastReadSeq int `json:"lastReadSeq"`
+	UnreadCount int `json:"unreadCount"`
+}
+
 type ChatMessage struct {
 	ID               string    `json:"id"`
 	ChannelID        string    `json:"channelId"`

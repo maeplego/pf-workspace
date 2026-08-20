@@ -415,6 +415,14 @@ export async function postMessage(channelId: string, body: string, attachmentFil
   }>;
 }
 
+export async function markChannelRead(channelId: string, lastSeq: number, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  return apiFetch(`/v1/channels/${channelId}/read`, session, {
+    method: "POST",
+    body: JSON.stringify({ lastSeq }),
+  }) as Promise<{ id: string; lastReadSeq: number; unreadCount: number }>;
+}
+
 type FileView = {
   id: string;
   url: string;

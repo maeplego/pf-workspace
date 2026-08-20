@@ -1050,11 +1050,52 @@ func (s *Service) CreateChannel(sub, wsID, name string) (domain.Channel, error) 
 	return s.store.CreateChannel(wsID, name, s.now().UTC())
 }
 
-func (s *Service) ListChannels(sub, wsID string) ([]domain.Channel, error) {
+func (s *Service) ListChannels(sub, wsID string) ([]domain.ChannelView, error) {
 	if err := s.requireRead(wsID, sub); err != nil {
 		return nil, err
 	}
-	return s.store.ListChannels(wsID)
+	chs, err := s.store.ListChannels(wsID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.ChannelView, 0, len(chs))
+	for _, ch := range chs {
+		lastRead, err := s.store.GetChannelRead(ch.ID, sub)
+		if err != nil {
+			return nil, err
+		}
+		unread, err := s.store.CountMessagesAfter(ch.ID, lastRead)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, domain.ChannelView{Channel: ch, LastReadSeq: lastRead, UnreadCount: unread})
+	}
+	return out, nil
+}
+
+func (s *Service) MarkChannelRead(sub, channelID string, lastSeq int) (domain.ChannelView, error) {
+	ch, err := s.store.GetChannel(channelID)
+	if err != nil {
+		return domain.ChannelView{}, err
+	}
+	if err := s.requireRead(ch.WorkspaceID, sub); err != nil {
+		return domain.ChannelView{}, err
+	}
+	if lastSeq < 0 {
+		return domain.ChannelView{}, domain.ErrInvalid
+	}
+	if err := s.store.UpsertChannelRead(channelID, sub, lastSeq, s.now().UTC()); err != nil {
+		return domain.ChannelView{}, err
+	}
+	lastRead, err := s.store.GetChannelRead(channelID, sub)
+	if err != nil {
+		return domain.ChannelView{}, err
+	}
+	unread, err := s.store.CountMessagesAfter(channelID, lastRead)
+	if err != nil {
+		return domain.ChannelView{}, err
+	}
+	return domain.ChannelView{Channel: ch, LastReadSeq: lastRead, UnreadCount: unread}, nil
 }
 
 func (s *Service) GetChannel(sub, channelID string) (domain.Channel, error) {

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { apiFetchForPage, createChannel } from "../app/actions";
 
-type Channel = { id: string; name: string };
+type Channel = { id: string; name: string; unreadCount?: number };
 
 export async function ChatShell({
   workspaceId,
@@ -52,13 +52,21 @@ export async function ChatShell({
           <Link href={`/search/${workspaceId}${q}`}>検索</Link>
         </p>
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {(channels || []).map((c) => (
-            <li key={c.id} style={{ margin: "0.2rem 0" }}>
-              <Link href={`/chat/${workspaceId}/${c.id}${q}`} style={{ fontWeight: c.id === currentId ? 700 : 400 }}>
-                #{c.name}
-              </Link>
-            </li>
-          ))}
+          {(channels || []).map((c) => {
+            const unread = c.id === currentId ? 0 : c.unreadCount || 0;
+            return (
+              <li key={c.id} style={{ margin: "0.2rem 0" }}>
+                <Link href={`/chat/${workspaceId}/${c.id}${q}`} style={{ fontWeight: c.id === currentId ? 700 : 400 }}>
+                  #{c.name}
+                  {unread > 0 ? (
+                    <span className="muted" style={{ marginLeft: "0.35rem" }}>
+                      ({unread})
+                    </span>
+                  ) : null}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
         {canEdit ? (
           <form action={createChannelAction} style={{ marginTop: "1rem", display: "grid", gap: "0.35rem" }}>
