@@ -9,6 +9,7 @@ type VersionInfo = {
   pageId: string;
   number: number;
   title: string;
+  status?: string;
   sub?: string;
   createdAt: string;
 };
@@ -72,7 +73,10 @@ export function WikiHistory({ workspaceId, pageId, lockVersion, readOnly, devUse
   return (
     <section className="card-surface" style={{ marginTop: "1.5rem" }}>
       <h2 style={{ marginTop: 0, fontSize: "1rem" }}>履歴</h2>
-      <p className="muted">API の title+body スナップショット（Y.Doc バイトではない）。collab 接続中の復元は再読込後に反映されます。</p>
+      <p className="muted">
+        タイトル・状態・本文のスナップショットです。共同編集のキー入力ごとではなく、保存や数秒おきの同期のときだけ増えます。
+        戻すときは「この版に戻す」を押してください。共同編集中ならページを再読み込みすると本文が反映されます。
+      </p>
       {error ? <p style={{ color: "#bf2600" }}>{error}</p> : null}
       {versions.length === 0 ? (
         <p className="muted">版がありません。</p>
@@ -82,7 +86,9 @@ export function WikiHistory({ workspaceId, pageId, lockVersion, readOnly, devUse
             {versions.map((v) => (
               <li key={v.number}>
                 v{v.number} {v.title}
-                <span className="muted"> · {new Date(v.createdAt).toISOString()}</span>
+                {v.status ? <span className="muted"> · {v.status}</span> : null}
+                {v.sub ? <span className="muted"> · {v.sub}</span> : null}
+                <span className="muted"> · {new Date(v.createdAt).toLocaleString()}</span>
                 {!readOnly ? (
                   <>
                     {" "}

@@ -7,7 +7,7 @@ func TestParseSearchTypesDefaultAndInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 4 {
+	if len(got) != 6 {
 		t.Fatalf("default types %v", got)
 	}
 	if _, err := ParseSearchTypes("page,bogus"); err != ErrInvalid {

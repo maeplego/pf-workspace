@@ -1,6 +1,10 @@
 package service
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +12,7 @@ import (
 	"time"
 
 	"github.com/portfolio/pf-workspace/api/internal/domain"
+	"github.com/portfolio/pf-workspace/api/internal/id"
 	"github.com/portfolio/pf-workspace/api/internal/store"
 )
 
@@ -75,11 +80,11 @@ func (s *Service) requireRead(wsID, sub string) error {
 	return s.requireRole(wsID, sub, domain.RoleGuest)
 }
 
-func (s *Service) CreateWorkspace(sub, name string) (domain.Workspace, error) {
+func (s *Service) CreateWorkspace(sub, name, orgID string) (domain.Workspace, error) {
 	if name == "" {
 		return domain.Workspace{}, domain.ErrForbidden
 	}
-	ws, err := s.store.CreateWorkspace(name, sub, s.now().UTC())
+	ws, err := s.store.CreateWorkspace(name, sub, strings.TrimSpace(orgID), s.now().UTC())
 	if err != nil {
 		return domain.Workspace{}, err
 	}
@@ -88,7 +93,11 @@ func (s *Service) CreateWorkspace(sub, name string) (domain.Workspace, error) {
 }
 
 func (s *Service) ListWorkspaces(sub string) []domain.Workspace {
-	return s.store.ListWorkspacesForSub(sub)
+	list := s.store.ListWorkspacesForSub(sub)
+	if list == nil {
+		return []domain.Workspace{}
+	}
+	return list
 }
 
 func (s *Service) GetWorkspace(sub, wsID string) (domain.Workspace, error) {
@@ -105,6 +114,24 @@ func (s *Service) ListMembers(sub, wsID string) ([]domain.Member, error) {
 	return s.store.ListMembers(wsID)
 }
 
+func (s *Service) GetMember(sub, wsID, memberSub string) (domain.Member, error) {
+	if err := s.requireRead(wsID, sub); err != nil {
+		return domain.Member{}, err
+	}
+	return s.store.GetMember(wsID, memberSub)
+}
+
+func (s *Service) SyncMemberDisplayName(sub, wsID, displayName string) (domain.Member, error) {
+	if err := s.requireRead(wsID, sub); err != nil {
+		return domain.Member{}, err
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		return domain.Member{}, domain.ErrInvalid
+	}
+	return s.store.UpdateMemberDisplayName(wsID, sub, displayName)
+}
+
 func (s *Service) AddMember(actorSub, wsID, memberSub string, role domain.Role) (domain.Member, error) {
 	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
 		return domain.Member{}, err
@@ -118,12 +145,132 @@ func (s *Service) AddMember(actorSub, wsID, memberSub string, role domain.Role) 
 	return s.store.AddMember(wsID, memberSub, role, s.now().UTC())
 }
 
+func newInviteToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func hashInviteToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Service) CreateInvitation(actorSub, wsID string, role domain.Role, invitedEmail string, maxUses int, ttlHours int) (domain.Invitation, string, error) {
+	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
+		return domain.Invitation{}, "", err
+	}
+	if role == "" {
+		role = domain.RoleMember
+	}
+	if role != domain.RoleMember && role != domain.RoleGuest {
+		return domain.Invitation{}, "", domain.ErrInvalid
+	}
+	if maxUses <= 0 {
+		maxUses = 1
+	}
+	if maxUses > domain.MaxInviteUses {
+		return domain.Invitation{}, "", domain.ErrInvalid
+	}
+	if ttlHours <= 0 {
+		ttlHours = 72
+	}
+	if ttlHours > 24*14 {
+		return domain.Invitation{}, "", domain.ErrInvalid
+	}
+	rawToken, err := newInviteToken()
+	if err != nil {
+		return domain.Invitation{}, "", err
+	}
+	now := s.now().UTC()
+	expiresAt := now.Add(time.Duration(ttlHours) * time.Hour)
+	invitedEmail = normalizeEmail(invitedEmail)
+	inv, err := s.store.CreateInvitation(wsID, hashInviteToken(rawToken), role, invitedEmail, maxUses, expiresAt, actorSub, now)
+	if err != nil {
+		return domain.Invitation{}, "", err
+	}
+	_ = s.store.AddAuditEvent(domain.AuditEvent{
+		ID: id.New(), WorkspaceID: wsID, ActorSub: actorSub, Type: "workspace.invitation.created", InviteID: inv.ID, CreatedAt: now,
+	})
+	return inv, rawToken, nil
+}
+
+func (s *Service) ListInvitations(actorSub, wsID string) ([]domain.Invitation, error) {
+	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
+		return nil, err
+	}
+	return s.store.ListInvitations(wsID)
+}
+
+func (s *Service) PreviewInvitation(sub, rawToken string) (domain.Invitation, domain.Workspace, error) {
+	if strings.TrimSpace(sub) == "" || strings.TrimSpace(rawToken) == "" {
+		return domain.Invitation{}, domain.Workspace{}, domain.ErrInvalid
+	}
+	inv, err := s.store.GetInvitationByTokenHash(hashInviteToken(rawToken))
+	if err != nil {
+		return domain.Invitation{}, domain.Workspace{}, domain.ErrNotFound
+	}
+	now := s.now().UTC()
+	if inv.RevokedAt != nil || !now.Before(inv.ExpiresAt) || inv.UseCount >= inv.MaxUses {
+		return domain.Invitation{}, domain.Workspace{}, domain.ErrNotFound
+	}
+	ws, err := s.store.GetWorkspace(inv.WorkspaceID)
+	if err != nil {
+		return domain.Invitation{}, domain.Workspace{}, domain.ErrNotFound
+	}
+	return inv, ws, nil
+}
+
+func (s *Service) AcceptInvitation(sub, email, rawToken string) (domain.Member, domain.Workspace, error) {
+	if strings.TrimSpace(sub) == "" || strings.TrimSpace(rawToken) == "" {
+		return domain.Member{}, domain.Workspace{}, domain.ErrInvalid
+	}
+	inv, err := s.store.GetInvitationByTokenHash(hashInviteToken(rawToken))
+	if err != nil {
+		return domain.Member{}, domain.Workspace{}, domain.ErrNotFound
+	}
+	if inv.InvitedEmail != "" && normalizeEmail(email) != inv.InvitedEmail {
+		return domain.Member{}, domain.Workspace{}, domain.ErrForbidden
+	}
+	now := s.now().UTC()
+	updated, member, joined, err := s.store.AcceptInvitation(inv.ID, sub, now)
+	if err != nil {
+		if err == domain.ErrForbidden {
+			return domain.Member{}, domain.Workspace{}, domain.ErrNotFound
+		}
+		return domain.Member{}, domain.Workspace{}, err
+	}
+	if joined {
+		_ = s.store.AddAuditEvent(domain.AuditEvent{
+			ID: id.New(), WorkspaceID: updated.WorkspaceID, ActorSub: sub, TargetSub: sub, Type: "workspace.invitation.accepted", InviteID: updated.ID, CreatedAt: now,
+		})
+	}
+	ws, err := s.store.GetWorkspace(updated.WorkspaceID)
+	if err != nil {
+		return domain.Member{}, domain.Workspace{}, err
+	}
+	return member, ws, nil
+}
+
+func (s *Service) ListAuditEvents(actorSub, wsID string) ([]domain.AuditEvent, error) {
+	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
+		return nil, err
+	}
+	return s.store.ListAuditEvents(wsID)
+}
+
 func (s *Service) CreateBoard(sub, wsID, name string) (domain.BoardDetail, error) {
 	if err := s.requireWrite(wsID, sub); err != nil {
 		return domain.BoardDetail{}, err
 	}
 	if name == "" {
-		name = "Main board"
+		return domain.BoardDetail{}, domain.ErrInvalid
 	}
 	board, cols, err := s.store.CreateBoard(wsID, name, s.now().UTC())
 	if err != nil {
@@ -136,11 +283,40 @@ func (s *Service) CreateBoard(sub, wsID, name string) (domain.BoardDetail, error
 	return detail, nil
 }
 
+func (s *Service) ArchiveBoard(sub, boardID string) error {
+	wsID, err := s.store.BoardWorkspaceID(boardID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireWrite(wsID, sub); err != nil {
+		return err
+	}
+	return s.store.ArchiveBoard(boardID, s.now().UTC())
+}
+
+func (s *Service) UnarchiveBoard(sub, boardID string) error {
+	wsID, err := s.store.BoardWorkspaceID(boardID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireWrite(wsID, sub); err != nil {
+		return err
+	}
+	return s.store.UnarchiveBoard(boardID)
+}
+
 func (s *Service) ListBoards(sub, wsID string) ([]domain.Board, error) {
 	if err := s.requireRead(wsID, sub); err != nil {
 		return nil, err
 	}
-	return s.store.ListBoards(wsID)
+	list, err := s.store.ListBoards(wsID)
+	if err != nil {
+		return nil, err
+	}
+	if list == nil {
+		return []domain.Board{}, nil
+	}
+	return list, nil
 }
 
 func (s *Service) GetBoard(sub, boardID string) (domain.BoardDetail, error) {
@@ -225,7 +401,7 @@ func (s *Service) CreatePage(sub, wsID, parentID, title, body, status string) (d
 	if err != nil {
 		return domain.Page{}, err
 	}
-	_, _, _ = s.store.AppendPageVersionIfChanged(page.ID, page.Title, page.Body, sub, s.now().UTC())
+	_, _, _ = s.store.AppendPageVersionIfChanged(page.ID, page.Title, page.Body, page.Status, sub, s.now().UTC())
 	return page, nil
 }
 
@@ -241,7 +417,37 @@ func (s *Service) PageTree(sub, wsID string) ([]domain.PageNode, error) {
 	if role == domain.RoleGuest {
 		pages = domain.FilterGuestPages(pages)
 	}
-	return domain.BuildPageTree(pages), nil
+	var live []domain.Page
+	for _, p := range pages {
+		if p.ArchivedAt == nil {
+			live = append(live, p)
+		}
+	}
+	return domain.BuildPageTree(live), nil
+}
+
+func (s *Service) ArchivedPages(sub, wsID string) ([]domain.Page, error) {
+	role, err := s.store.MemberRole(wsID, sub)
+	if err != nil {
+		return nil, err
+	}
+	if role == domain.RoleGuest {
+		return []domain.Page{}, nil
+	}
+	pages, err := s.store.ListPages(wsID)
+	if err != nil {
+		return nil, err
+	}
+	var out []domain.Page
+	for _, p := range pages {
+		if p.ArchivedAt != nil {
+			out = append(out, p)
+		}
+	}
+	if out == nil {
+		out = []domain.Page{}
+	}
+	return out, nil
 }
 
 func (s *Service) GetPage(sub, pageID string) (domain.Page, error) {
@@ -256,6 +462,9 @@ func (s *Service) GetPage(sub, pageID string) (domain.Page, error) {
 	page, err := s.store.GetPage(pageID)
 	if err != nil {
 		return domain.Page{}, err
+	}
+	if page.ArchivedAt != nil && role == domain.RoleGuest {
+		return domain.Page{}, domain.ErrNotFound
 	}
 	if role == domain.RoleGuest && !domain.PageVisibleToGuest(page) {
 		return domain.Page{}, domain.ErrNotFound
@@ -305,10 +514,32 @@ func (s *Service) UpdatePage(sub, pageID string, title, body, status *string, pa
 	if err != nil {
 		return page, err
 	}
-	if title != nil || body != nil {
-		_, _, _ = s.store.AppendPageVersionIfChanged(page.ID, page.Title, page.Body, sub, s.now().UTC())
+	if title != nil || body != nil || status != nil {
+		_, _, _ = s.store.AppendPageVersionIfChanged(page.ID, page.Title, page.Body, page.Status, sub, s.now().UTC())
 	}
 	return page, nil
+}
+
+func (s *Service) ArchivePage(sub, pageID string) error {
+	wsID, err := s.store.PageWorkspaceID(pageID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireWrite(wsID, sub); err != nil {
+		return err
+	}
+	return s.store.ArchivePage(pageID, s.now().UTC())
+}
+
+func (s *Service) UnarchivePage(sub, pageID string) error {
+	wsID, err := s.store.PageWorkspaceID(pageID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireWrite(wsID, sub); err != nil {
+		return err
+	}
+	return s.store.UnarchivePage(pageID)
 }
 
 func (s *Service) CreateDocument(sub, wsID, title, body string) (domain.Document, error) {
@@ -329,7 +560,43 @@ func (s *Service) ListDocuments(sub, wsID string) ([]domain.Document, error) {
 	if err := s.requireRead(wsID, sub); err != nil {
 		return nil, err
 	}
-	return s.store.ListDocuments(wsID)
+	list, err := s.store.ListDocuments(wsID)
+	if err != nil {
+		return nil, err
+	}
+	var live []domain.Document
+	for _, d := range list {
+		if d.DeletedAt == nil {
+			live = append(live, d)
+		}
+	}
+	if live == nil {
+		live = []domain.Document{}
+	}
+	return live, nil
+}
+
+func (s *Service) ListTrashedDocuments(sub, wsID string) ([]domain.Document, error) {
+	if err := s.requireWrite(wsID, sub); err != nil {
+		if err == domain.ErrForbidden {
+			return []domain.Document{}, nil
+		}
+		return nil, err
+	}
+	list, err := s.store.ListDocuments(wsID)
+	if err != nil {
+		return nil, err
+	}
+	var trash []domain.Document
+	for _, d := range list {
+		if d.DeletedAt != nil {
+			trash = append(trash, d)
+		}
+	}
+	if trash == nil {
+		trash = []domain.Document{}
+	}
+	return trash, nil
 }
 
 func (s *Service) GetDocument(sub, docID string) (domain.Document, error) {
@@ -339,6 +606,15 @@ func (s *Service) GetDocument(sub, docID string) (domain.Document, error) {
 	}
 	if err := s.requireRead(doc.WorkspaceID, sub); err != nil {
 		return domain.Document{}, err
+	}
+	if doc.DeletedAt != nil {
+		role, err := s.store.MemberRole(doc.WorkspaceID, sub)
+		if err != nil {
+			return domain.Document{}, err
+		}
+		if role == domain.RoleGuest {
+			return domain.Document{}, domain.ErrNotFound
+		}
 	}
 	return doc, nil
 }
@@ -356,6 +632,28 @@ func (s *Service) UpdateDocumentTitle(sub, docID, title string) (domain.Document
 		return domain.Document{}, domain.ErrInvalid
 	}
 	return s.store.UpdateDocumentTitle(docID, title, s.now().UTC())
+}
+
+func (s *Service) TrashDocument(sub, docID string) error {
+	doc, err := s.store.GetDocument(docID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireWrite(doc.WorkspaceID, sub); err != nil {
+		return err
+	}
+	return s.store.TrashDocument(docID, s.now().UTC())
+}
+
+func (s *Service) RestoreDocument(sub, docID string) error {
+	doc, err := s.store.GetDocument(docID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireWrite(doc.WorkspaceID, sub); err != nil {
+		return err
+	}
+	return s.store.RestoreDocument(docID)
 }
 
 type IssuedTicket struct {
@@ -454,7 +752,7 @@ func (s *Service) CollabPlaintext(collabDocumentID string) (string, error) {
 	}
 }
 
-func (s *Service) ApplyCollabSnapshot(collabDocumentID, plaintext string) error {
+func (s *Service) ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub string) error {
 	if !domain.ValidCollabRoom(collabDocumentID) {
 		return domain.ErrInvalid
 	}
@@ -465,7 +763,7 @@ func (s *Service) ApplyCollabSnapshot(collabDocumentID, plaintext string) error 
 	if err != nil {
 		return err
 	}
-	if err := s.store.ApplyCollabSnapshot(collabDocumentID, plaintext, s.now().UTC()); err != nil {
+	if err := s.store.ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub, s.now().UTC()); err != nil {
 		return err
 	}
 	if kind == "page" {
@@ -473,7 +771,7 @@ func (s *Service) ApplyCollabSnapshot(collabDocumentID, plaintext string) error 
 		if err != nil {
 			return err
 		}
-		_, _, _ = s.store.AppendPageVersionIfChanged(p.ID, p.Title, p.Body, "", s.now().UTC())
+		_, _, _ = s.store.AppendPageVersionIfChanged(p.ID, p.Title, p.Body, p.Status, editorSub, s.now().UTC())
 	}
 	return nil
 }

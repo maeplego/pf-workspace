@@ -32,6 +32,8 @@ services:
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
     ports:
       - "8096:8096"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       workspace-db:
         condition: service_healthy

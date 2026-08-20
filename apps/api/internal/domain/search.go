@@ -11,7 +11,7 @@ func ParseSearchTypes(raw string) ([]string, error) {
 		copy(out, DefaultSearchTypes)
 		return out, nil
 	}
-	allowed := map[string]bool{"page": true, "document": true, "card": true, "message": true}
+	allowed := map[string]bool{"page": true, "document": true, "board": true, "card": true, "channel": true, "message": true}
 	seen := map[string]bool{}
 	var out []string
 	for _, part := range strings.Split(raw, ",") {

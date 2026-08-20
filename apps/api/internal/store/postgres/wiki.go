@@ -12,11 +12,11 @@ import (
 
 func scanPage(scan func(dest ...any) error) (domain.Page, error) {
 	var p domain.Page
-	err := scan(&p.ID, &p.WorkspaceID, &p.ParentID, &p.Title, &p.Body, &p.Status, &p.Position, &p.Version, &p.CollabDocumentID, &p.CreatedAt, &p.UpdatedAt)
+	err := scan(&p.ID, &p.WorkspaceID, &p.ParentID, &p.Title, &p.Body, &p.Status, &p.Position, &p.Version, &p.CollabDocumentID, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt)
 	return p, err
 }
 
-const pageCols = `id, workspace_id, parent_id, title, body, status, position, version, collab_document_id, created_at, updated_at`
+const pageCols = `id, workspace_id, parent_id, title, body, status, position, version, collab_document_id, created_at, updated_at, archived_at`
 
 func (s *Store) CreatePage(wsID, parentID, title, body, status string, now time.Time) (domain.Page, error) {
 	ctx := context.Background()
@@ -35,7 +35,7 @@ func (s *Store) CreatePage(wsID, parentID, title, body, status string, now time.
 		ID: id.New(), WorkspaceID: wsID, ParentID: parentID, Title: title, Body: body, Status: status,
 		Position: pos, Version: 1, CollabDocumentID: id.New(), CreatedAt: now, UpdatedAt: now,
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO pages (`+pageCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+	_, err = s.pool.Exec(ctx, `INSERT INTO pages (id, workspace_id, parent_id, title, body, status, position, version, collab_document_id, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		p.ID, p.WorkspaceID, p.ParentID, p.Title, p.Body, p.Status, p.Position, p.Version, p.CollabDocumentID, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return domain.Page{}, err
@@ -128,6 +128,42 @@ func (s *Store) UpdatePage(pageID string, title, body, status, parentID *string,
 	return p, nil
 }
 
+func (s *Store) ArchivePage(pageID string, now time.Time) error {
+	ctx := context.Background()
+	cmd, err := s.pool.Exec(ctx, `
+		WITH RECURSIVE tree AS (
+			SELECT id FROM pages WHERE id = $1
+			UNION ALL
+			SELECT p.id FROM pages p JOIN tree t ON p.parent_id = t.id
+		)
+		UPDATE pages SET archived_at = $2 WHERE id IN (SELECT id FROM tree)`, pageID, now)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() < 1 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UnarchivePage(pageID string) error {
+	ctx := context.Background()
+	cmd, err := s.pool.Exec(ctx, `
+		WITH RECURSIVE tree AS (
+			SELECT id FROM pages WHERE id = $1
+			UNION ALL
+			SELECT p.id FROM pages p JOIN tree t ON p.parent_id = t.id
+		)
+		UPDATE pages SET archived_at = NULL WHERE id IN (SELECT id FROM tree)`, pageID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() < 1 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) validateParent(ctx context.Context, pageID, wsID, parentID string) error {
 	return s.validateParentTx(ctx, s.pool, pageID, wsID, parentID)
 }
@@ -192,7 +228,7 @@ func (s *Store) ListDocuments(wsID string) ([]domain.Document, error) {
 	if err := s.workspaceExists(ctx, wsID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, workspace_id, title, body, collab_document_id, created_at, updated_at
+	rows, err := s.pool.Query(ctx, `SELECT id, workspace_id, title, body, collab_document_id, last_editor_sub, created_at, updated_at, deleted_at
 		FROM documents WHERE workspace_id = $1 ORDER BY created_at, id`, wsID)
 	if err != nil {
 		return nil, err
@@ -201,7 +237,7 @@ func (s *Store) ListDocuments(wsID string) ([]domain.Document, error) {
 	var out []domain.Document
 	for rows.Next() {
 		var d domain.Document
-		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.CollabDocumentID, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.CollabDocumentID, &d.LastEditorSub, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -211,8 +247,8 @@ func (s *Store) ListDocuments(wsID string) ([]domain.Document, error) {
 
 func (s *Store) GetDocument(docID string) (domain.Document, error) {
 	var d domain.Document
-	err := s.pool.QueryRow(context.Background(), `SELECT id, workspace_id, title, body, collab_document_id, created_at, updated_at FROM documents WHERE id = $1`, docID).
-		Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.CollabDocumentID, &d.CreatedAt, &d.UpdatedAt)
+	err := s.pool.QueryRow(context.Background(), `SELECT id, workspace_id, title, body, collab_document_id, last_editor_sub, created_at, updated_at, deleted_at FROM documents WHERE id = $1`, docID).
+		Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.CollabDocumentID, &d.LastEditorSub, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
 	if err != nil {
 		return domain.Document{}, mapErr(err)
 	}
@@ -222,12 +258,36 @@ func (s *Store) GetDocument(docID string) (domain.Document, error) {
 func (s *Store) UpdateDocumentTitle(docID, title string, now time.Time) (domain.Document, error) {
 	var d domain.Document
 	err := s.pool.QueryRow(context.Background(), `UPDATE documents SET title=$2, updated_at=$3 WHERE id=$1
-		RETURNING id, workspace_id, title, body, collab_document_id, created_at, updated_at`, docID, title, now).
-		Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.CollabDocumentID, &d.CreatedAt, &d.UpdatedAt)
+		RETURNING id, workspace_id, title, body, collab_document_id, last_editor_sub, created_at, updated_at, deleted_at`, docID, title, now).
+		Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.CollabDocumentID, &d.LastEditorSub, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
 	if err != nil {
 		return domain.Document{}, mapErr(err)
 	}
 	return d, nil
+}
+
+func (s *Store) TrashDocument(docID string, now time.Time) error {
+	ctx := context.Background()
+	cmd, err := s.pool.Exec(ctx, "UPDATE documents SET deleted_at = $2 WHERE id = $1 AND deleted_at IS NULL", docID, now)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() != 1 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) RestoreDocument(docID string) error {
+	ctx := context.Background()
+	cmd, err := s.pool.Exec(ctx, "UPDATE documents SET deleted_at = NULL WHERE id = $1", docID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() != 1 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) LookupCollab(collabDocumentID string) (kind, id string, err error) {
@@ -265,7 +325,7 @@ func (s *Store) GetTicket(ticketID string) (domain.CollabTicket, error) {
 	return t, nil
 }
 
-func (s *Store) ApplyCollabSnapshot(collabDocumentID, plaintext string, now time.Time) error {
+func (s *Store) ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub string, now time.Time) error {
 	ctx := context.Background()
 	cmd, err := s.pool.Exec(ctx, "UPDATE pages SET body=$2, updated_at=$3 WHERE collab_document_id=$1", collabDocumentID, plaintext, now)
 	if err != nil {
@@ -274,7 +334,7 @@ func (s *Store) ApplyCollabSnapshot(collabDocumentID, plaintext string, now time
 	if cmd.RowsAffected() == 1 {
 		return nil
 	}
-	cmd, err = s.pool.Exec(ctx, "UPDATE documents SET body=$2, updated_at=$3 WHERE collab_document_id=$1", collabDocumentID, plaintext, now)
+	cmd, err = s.pool.Exec(ctx, "UPDATE documents SET body=$2, updated_at=$3, last_editor_sub=$4 WHERE collab_document_id=$1", collabDocumentID, plaintext, now, editorSub)
 	if err != nil {
 		return err
 	}
@@ -544,7 +604,7 @@ func (s *Store) DeleteSprint(sprintID string) error {
 	return err
 }
 
-func (s *Store) AppendPageVersionIfChanged(pageID, title, body, sub string, now time.Time) (domain.PageVersion, bool, error) {
+func (s *Store) AppendPageVersionIfChanged(pageID, title, body, status, sub string, now time.Time) (domain.PageVersion, bool, error) {
 	ctx := context.Background()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -556,12 +616,12 @@ func (s *Store) AppendPageVersionIfChanged(pageID, title, body, sub string, now 
 		return domain.PageVersion{}, false, mapErr(err)
 	}
 	var last domain.PageVersion
-	err = tx.QueryRow(ctx, `SELECT page_id, number, title, body, sub, created_at FROM page_versions WHERE page_id = $1 ORDER BY number DESC LIMIT 1`, pageID).
-		Scan(&last.PageID, &last.Number, &last.Title, &last.Body, &last.Sub, &last.CreatedAt)
+	err = tx.QueryRow(ctx, `SELECT page_id, number, title, body, status, sub, created_at FROM page_versions WHERE page_id = $1 ORDER BY number DESC LIMIT 1`, pageID).
+		Scan(&last.PageID, &last.Number, &last.Title, &last.Body, &last.Status, &last.Sub, &last.CreatedAt)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return domain.PageVersion{}, false, err
 	}
-	if err == nil && last.Title == title && last.Body == body {
+	if err == nil && last.Title == title && last.Body == body && last.Status == status {
 		if err := tx.Commit(ctx); err != nil {
 			return domain.PageVersion{}, false, err
 		}
@@ -571,9 +631,9 @@ func (s *Store) AppendPageVersionIfChanged(pageID, title, body, sub string, now 
 	if err == nil {
 		num = last.Number + 1
 	}
-	v := domain.PageVersion{PageID: pageID, Number: num, Title: title, Body: body, Sub: sub, CreatedAt: now}
-	if _, err := tx.Exec(ctx, `INSERT INTO page_versions (page_id, number, title, body, sub, created_at) VALUES ($1,$2,$3,$4,$5,$6)`,
-		v.PageID, v.Number, v.Title, v.Body, v.Sub, v.CreatedAt); err != nil {
+	v := domain.PageVersion{PageID: pageID, Number: num, Title: title, Status: status, Body: body, Sub: sub, CreatedAt: now}
+	if _, err := tx.Exec(ctx, `INSERT INTO page_versions (page_id, number, title, body, status, sub, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		v.PageID, v.Number, v.Title, v.Body, v.Status, v.Sub, v.CreatedAt); err != nil {
 		return domain.PageVersion{}, false, err
 	}
 	if v.Number > domain.MaxPageVersions {
@@ -594,7 +654,7 @@ func (s *Store) ListPageVersions(pageID string) ([]domain.PageVersion, error) {
 	if err := s.pool.QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
 		return nil, mapErr(err)
 	}
-	rows, err := s.pool.Query(ctx, `SELECT page_id, number, title, body, sub, created_at FROM page_versions WHERE page_id = $1 ORDER BY number`, pageID)
+	rows, err := s.pool.Query(ctx, `SELECT page_id, number, title, body, status, sub, created_at FROM page_versions WHERE page_id = $1 ORDER BY number`, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -602,7 +662,7 @@ func (s *Store) ListPageVersions(pageID string) ([]domain.PageVersion, error) {
 	var out []domain.PageVersion
 	for rows.Next() {
 		var v domain.PageVersion
-		if err := rows.Scan(&v.PageID, &v.Number, &v.Title, &v.Body, &v.Sub, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.PageID, &v.Number, &v.Title, &v.Body, &v.Status, &v.Sub, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -617,8 +677,8 @@ func (s *Store) GetPageVersion(pageID string, number int) (domain.PageVersion, e
 		return domain.PageVersion{}, mapErr(err)
 	}
 	var v domain.PageVersion
-	err := s.pool.QueryRow(ctx, `SELECT page_id, number, title, body, sub, created_at FROM page_versions WHERE page_id = $1 AND number = $2`, pageID, number).
-		Scan(&v.PageID, &v.Number, &v.Title, &v.Body, &v.Sub, &v.CreatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT page_id, number, title, body, status, sub, created_at FROM page_versions WHERE page_id = $1 AND number = $2`, pageID, number).
+		Scan(&v.PageID, &v.Number, &v.Title, &v.Body, &v.Status, &v.Sub, &v.CreatedAt)
 	if err != nil {
 		return domain.PageVersion{}, mapErr(err)
 	}

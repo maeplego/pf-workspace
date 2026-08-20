@@ -3,6 +3,7 @@ import { internalBase, oidcEnabled } from "./oidc/env";
 
 export type WorkspaceSession = {
   sub: string;
+  email?: string;
   accessToken?: string;
   displayName?: string;
   devMode: boolean;
@@ -23,6 +24,7 @@ export async function getWorkspaceSession(devUser?: string): Promise<WorkspaceSe
   if (!ui.sub) return null;
   return {
     sub: ui.sub,
+    email: ui.email ? ui.email.toLowerCase().trim() : undefined,
     accessToken: access,
     displayName: ui.name || ui.email || ui.sub,
     devMode: false,

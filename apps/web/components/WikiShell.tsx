@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, createPage } from "../app/actions";
+import { apiFetchForPage, createPage, unarchivePage } from "../app/actions";
 import { WikiTree, type PageNode } from "./WikiTree";
 
 export async function WikiShell({
@@ -18,7 +18,10 @@ export async function WikiShell({
   children: React.ReactNode;
 }) {
   const workspace = (await apiFetchForPage(`/v1/workspaces/${workspaceId}`, devUser)) as { id: string; name: string };
-  const { tree } = (await apiFetchForPage(`/v1/workspaces/${workspaceId}/pages/tree`, devUser)) as { tree: PageNode[] };
+  const { tree, archived } = (await apiFetchForPage(`/v1/workspaces/${workspaceId}/pages/tree`, devUser)) as {
+    tree: PageNode[];
+    archived?: { id: string; title: string }[];
+  };
   const { members } = (await apiFetchForPage(`/v1/workspaces/${workspaceId}/members`, devUser)) as {
     members: { sub: string; role: string }[];
   };
@@ -55,6 +58,20 @@ export async function WikiShell({
           </Link>
         </p>
         <WikiTree nodes={tree || []} workspaceId={workspaceId} currentId={currentId} devUser={devUser} />
+        {canEdit && (archived || []).length > 0 ? (
+          <div style={{ marginTop: "1rem" }}>
+            <p className="muted" style={{ marginBottom: "0.35rem" }}>
+              アーカイブ
+            </p>
+            {(archived || []).map((p) => (
+              <form key={p.id} action={unarchivePage.bind(null, workspaceId, p.id, devUser)} style={{ marginBottom: "0.35rem" }}>
+                <button type="submit" className="btn btn-secondary">
+                  {p.title} を戻す
+                </button>
+              </form>
+            ))}
+          </div>
+        ) : null}
         {canEdit ? (
           <form action={createPageAction} style={{ marginTop: "1rem", display: "grid", gap: "0.35rem" }}>
             <input name="title" placeholder="New page" required style={{ padding: "0.35rem" }} />

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, createDocument } from "../app/actions";
+import { apiFetchForPage, createDocument, untrashDocument } from "../app/actions";
 
 type Doc = { id: string; title: string };
 
@@ -19,8 +19,9 @@ export async function DocsShell({
   children: React.ReactNode;
 }) {
   const workspace = (await apiFetchForPage(`/v1/workspaces/${workspaceId}`, devUser)) as { id: string; name: string };
-  const { documents } = (await apiFetchForPage(`/v1/workspaces/${workspaceId}/documents`, devUser)) as {
+  const { documents, trashed } = (await apiFetchForPage(`/v1/workspaces/${workspaceId}/documents`, devUser)) as {
     documents: Doc[];
+    trashed?: Doc[];
   };
   const { members } = (await apiFetchForPage(`/v1/workspaces/${workspaceId}/members`, devUser)) as {
     members: { sub: string; role: string }[];
@@ -60,6 +61,20 @@ export async function DocsShell({
             </li>
           ))}
         </ul>
+        {canEdit && (trashed || []).length > 0 ? (
+          <div style={{ marginTop: "1rem" }}>
+            <p className="muted" style={{ marginBottom: "0.35rem" }}>
+              ゴミ箱（復元できます）
+            </p>
+            {(trashed || []).map((d) => (
+              <form key={d.id} action={untrashDocument.bind(null, workspaceId, d.id, devUser)} style={{ marginBottom: "0.35rem" }}>
+                <button type="submit" className="btn btn-secondary">
+                  {d.title} を戻す
+                </button>
+              </form>
+            ))}
+          </div>
+        ) : null}
         {canEdit ? (
           <form action={createDocAction} style={{ marginTop: "1rem", display: "grid", gap: "0.35rem" }}>
             <input name="title" placeholder="New document" required style={{ padding: "0.35rem" }} />

@@ -17,7 +17,10 @@ import (
 type ctxKey struct{}
 
 type User struct {
-	Sub string
+	Sub           string
+	Email         string
+	EmailVerified bool
+	OrgID         string
 }
 
 func WithUser(ctx context.Context, u User) context.Context {
@@ -59,7 +62,9 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 
 func (m *Middleware) authenticate(r *http.Request) (User, error) {
 	if h := strings.TrimSpace(r.Header.Get("X-Dev-User-Sub")); h != "" && m.devAuth {
-		return User{Sub: h}, nil
+		email := strings.TrimSpace(r.Header.Get("X-Dev-User-Email"))
+		orgID := strings.TrimSpace(r.Header.Get("X-Dev-User-Org"))
+		return User{Sub: h, Email: email, EmailVerified: email != "", OrgID: orgID}, nil
 	}
 	authz := strings.TrimSpace(r.Header.Get("Authorization"))
 	if !strings.HasPrefix(authz, "Bearer ") {
@@ -95,7 +100,23 @@ func (m *Middleware) authenticateJWT(ctx context.Context, token string) (User, e
 	if sub == "" {
 		return User{}, fmt.Errorf("empty sub")
 	}
-	return User{Sub: sub}, nil
+	u := User{Sub: sub}
+	if v, ok := tok.Get("email"); ok {
+		if s, ok := v.(string); ok {
+			u.Email = strings.ToLower(strings.TrimSpace(s))
+		}
+	}
+	if v, ok := tok.Get("email_verified"); ok {
+		if b, ok := v.(bool); ok {
+			u.EmailVerified = b
+		}
+	}
+	if v, ok := tok.Get("org_id"); ok {
+		if s, ok := v.(string); ok {
+			u.OrgID = strings.TrimSpace(s)
+		}
+	}
+	return u, nil
 }
 
 func (m *Middleware) authenticateUserInfo(ctx context.Context, token string) (User, error) {
@@ -117,7 +138,10 @@ func (m *Middleware) authenticateUserInfo(ctx context.Context, token string) (Us
 		return User{}, err
 	}
 	var ui struct {
-		Sub string `json:"sub"`
+		Sub           string `json:"sub"`
+		Email         string `json:"email"`
+		EmailVerified bool   `json:"email_verified"`
+		OrgID         string `json:"org_id"`
 	}
 	if err := json.Unmarshal(body, &ui); err != nil {
 		return User{}, err
@@ -125,7 +149,12 @@ func (m *Middleware) authenticateUserInfo(ctx context.Context, token string) (Us
 	if ui.Sub == "" {
 		return User{}, fmt.Errorf("empty sub")
 	}
-	return User{Sub: ui.Sub}, nil
+	return User{
+		Sub:           ui.Sub,
+		Email:         strings.ToLower(strings.TrimSpace(ui.Email)),
+		EmailVerified: ui.EmailVerified,
+		OrgID:         strings.TrimSpace(ui.OrgID),
+	}, nil
 }
 
 func (m *Middleware) jwksSet(ctx context.Context) (jwk.Set, error) {

@@ -33,8 +33,8 @@ async function apiJSON(path, body) {
 }
 
 const hocuspocus = new Hocuspocus({
-  debounce: 2000,
-  maxDebounce: 10000,
+  debounce: 8000,
+  maxDebounce: 20000,
   async onAuthenticate({ token, documentName, connection }) {
     if (!validRoom(documentName)) {
       throw new Error("invalid room");
@@ -66,7 +66,7 @@ const hocuspocus = new Hocuspocus({
     }
     return document;
   },
-  async onStoreDocument({ documentName, document }) {
+  async onStoreDocument({ documentName, document, context }) {
     const update = Y.encodeStateAsUpdate(document);
     if (update.byteLength > MAX_UPDATE_BYTES) {
       throw new Error("document too large");
@@ -76,10 +76,12 @@ const hocuspocus = new Hocuspocus({
       throw new Error("plaintext too large");
     }
     ydocs.set(documentName, update);
+    const editorSub = typeof context?.name === "string" ? context.name : "";
     try {
       await apiJSON("/internal/v1/collab/snapshot", {
         collabDocumentId: documentName,
         plaintext,
+        editorSub,
       });
     } catch (err) {
       console.warn("snapshot failed", err.message || err);

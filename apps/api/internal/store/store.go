@@ -10,14 +10,24 @@ import (
 type Store interface {
 	Ping() error
 
-	CreateWorkspace(name, ownerSub string, now time.Time) (domain.Workspace, error)
+	CreateWorkspace(name, ownerSub, orgID string, now time.Time) (domain.Workspace, error)
 	ListWorkspacesForSub(sub string) []domain.Workspace
 	GetWorkspace(wsID string) (domain.Workspace, error)
 	MemberRole(wsID, sub string) (domain.Role, error)
 	ListMembers(wsID string) ([]domain.Member, error)
+	GetMember(wsID, sub string) (domain.Member, error)
 	AddMember(wsID, sub string, role domain.Role, now time.Time) (domain.Member, error)
+	UpdateMemberDisplayName(wsID, sub, displayName string) (domain.Member, error)
+	CreateInvitation(wsID, tokenHash string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time, invitedBy string, now time.Time) (domain.Invitation, error)
+	ListInvitations(wsID string) ([]domain.Invitation, error)
+	GetInvitationByTokenHash(tokenHash string) (domain.Invitation, error)
+	AcceptInvitation(inviteID, sub string, now time.Time) (domain.Invitation, domain.Member, bool, error)
+	AddAuditEvent(event domain.AuditEvent) error
+	ListAuditEvents(wsID string) ([]domain.AuditEvent, error)
 
 	CreateBoard(wsID, name string, now time.Time) (domain.Board, []domain.Column, error)
+	ArchiveBoard(boardID string, now time.Time) error
+	UnarchiveBoard(boardID string) error
 	ListBoards(wsID string) ([]domain.Board, error)
 	GetBoardDetail(boardID string) (domain.BoardDetail, error)
 	BoardWorkspaceID(boardID string) (string, error)
@@ -35,15 +45,19 @@ type Store interface {
 	ListPages(wsID string) ([]domain.Page, error)
 	PageWorkspaceID(pageID string) (string, error)
 	UpdatePage(pageID string, title, body, status, parentID *string, version int, now time.Time) (domain.Page, error)
+	ArchivePage(pageID string, now time.Time) error
+	UnarchivePage(pageID string) error
 
 	CreateDocument(wsID, title, body string, now time.Time) (domain.Document, error)
 	ListDocuments(wsID string) ([]domain.Document, error)
 	GetDocument(docID string) (domain.Document, error)
 	UpdateDocumentTitle(docID, title string, now time.Time) (domain.Document, error)
+	TrashDocument(docID string, now time.Time) error
+	RestoreDocument(docID string) error
 	LookupCollab(collabDocumentID string) (kind, id string, err error)
 	CreateTicket(sub, collabDocumentID string, readOnly bool, now time.Time) domain.CollabTicket
 	GetTicket(ticketID string) (domain.CollabTicket, error)
-	ApplyCollabSnapshot(collabDocumentID, plaintext string, now time.Time) error
+	ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub string, now time.Time) error
 
 	CreateChannel(wsID, name string, now time.Time) (domain.Channel, error)
 	ListChannels(wsID string) ([]domain.Channel, error)
@@ -64,7 +78,7 @@ type Store interface {
 	UpdateSprint(sprintID, name string, startAt, endAt *time.Time, now time.Time) (domain.Sprint, error)
 	DeleteSprint(sprintID string) error
 
-	AppendPageVersionIfChanged(pageID, title, body, sub string, now time.Time) (domain.PageVersion, bool, error)
+	AppendPageVersionIfChanged(pageID, title, body, status, sub string, now time.Time) (domain.PageVersion, bool, error)
 	ListPageVersions(pageID string) ([]domain.PageVersion, error)
 	GetPageVersion(pageID string, number int) (domain.PageVersion, error)
 }

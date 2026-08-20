@@ -4,7 +4,8 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useState, useTransition } from "react";
 
-import { updatePage } from "../app/actions";
+import { archivePage, updatePage } from "../app/actions";
+import { ConfirmDelete } from "./ConfirmDelete";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { WikiAttach } from "./WikiAttach";
 import { WikiHistory } from "./WikiHistory";
@@ -23,6 +24,7 @@ type VersionInfo = {
   pageId: string;
   number: number;
   title: string;
+  status?: string;
   sub?: string;
   createdAt: string;
 };
@@ -114,10 +116,15 @@ export function WikiEditor({
               <option value="published">published</option>
             </select>
           </label>
-          <div style={{ marginBottom: "0.75rem" }}>
+          <div style={{ marginBottom: "0.75rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             <button type="button" onClick={() => save(false)} disabled={pending}>
               タイトルと状態を保存
             </button>
+            <ConfirmDelete
+              label="ページをアーカイブ"
+              message="このページと子ページをアーカイブします。左のアーカイブ一覧から戻せます。"
+              onConfirm={archivePage.bind(null, workspaceId, pageId, devUser)}
+            />
           </div>
         </>
       ) : null}

@@ -13,21 +13,48 @@ const (
 type Workspace struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
+	OrgID     string    `json:"orgId,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 type Member struct {
 	WorkspaceID string    `json:"workspaceId"`
 	Sub         string    `json:"sub"`
+	DisplayName string    `json:"displayName,omitempty"`
 	Role        Role      `json:"role"`
 	JoinedAt    time.Time `json:"joinedAt"`
 }
 
-type Board struct {
+type Invitation struct {
+	ID           string     `json:"id"`
+	WorkspaceID  string     `json:"workspaceId"`
+	TokenHash    string     `json:"-"`
+	Role         Role       `json:"role"`
+	InvitedEmail string     `json:"invitedEmail,omitempty"`
+	MaxUses      int        `json:"maxUses"`
+	UseCount     int        `json:"useCount"`
+	ExpiresAt    time.Time  `json:"expiresAt"`
+	InvitedBy    string     `json:"invitedBy"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	RevokedAt    *time.Time `json:"revokedAt,omitempty"`
+}
+
+type AuditEvent struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspaceId"`
-	Name        string    `json:"name"`
+	ActorSub    string    `json:"actorSub"`
+	Type        string    `json:"type"`
+	TargetSub   string    `json:"targetSub,omitempty"`
+	InviteID    string    `json:"inviteId,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type Board struct {
+	ID          string     `json:"id"`
+	WorkspaceID string     `json:"workspaceId"`
+	Name        string     `json:"name"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	ArchivedAt  *time.Time `json:"archivedAt,omitempty"`
 }
 
 type Column struct {
@@ -82,6 +109,7 @@ const (
 	MaxSprintName       = 80
 	MaxSprintDays       = 90
 	MaxPageVersions     = 100
+	MaxInviteUses       = 100
 )
 
 type Sprint struct {
@@ -100,15 +128,16 @@ type BurndownPoint struct {
 }
 
 type Burndown struct {
-	SprintID string           `json:"sprintId"`
-	Unit     string           `json:"unit"`
-	Points   []BurndownPoint  `json:"points"`
+	SprintID string          `json:"sprintId"`
+	Unit     string          `json:"unit"`
+	Points   []BurndownPoint `json:"points"`
 }
 
 type PageVersion struct {
 	PageID    string    `json:"pageId"`
 	Number    int       `json:"number"`
 	Title     string    `json:"title"`
+	Status    string    `json:"status,omitempty"`
 	Body      string    `json:"body,omitempty"`
 	Sub       string    `json:"sub,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -118,6 +147,7 @@ type PageVersionInfo struct {
 	PageID    string    `json:"pageId"`
 	Number    int       `json:"number"`
 	Title     string    `json:"title"`
+	Status    string    `json:"status,omitempty"`
 	Sub       string    `json:"sub,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
@@ -137,7 +167,7 @@ type PageDiff struct {
 	Lines        []DiffLine `json:"lines"`
 }
 
-var DefaultSearchTypes = []string{"page", "document", "card", "message"}
+var DefaultSearchTypes = []string{"page", "document", "board", "card", "channel", "message"}
 
 type Channel struct {
 	ID          string    `json:"id"`
@@ -158,11 +188,13 @@ type ChatMessage struct {
 }
 
 type SearchHit struct {
-	Type      string            `json:"type"`
-	ID        string            `json:"id"`
-	Title     string            `json:"title"`
-	Snippet   string            `json:"snippet"`
-	HrefHints map[string]string `json:"hrefHints"`
+	Type       string            `json:"type"`
+	ID         string            `json:"id"`
+	Title      string            `json:"title"`
+	Context    string            `json:"context,omitempty"`
+	MatchLabel string            `json:"matchLabel,omitempty"`
+	Snippet    string            `json:"snippet"`
+	HrefHints  map[string]string `json:"hrefHints"`
 }
 
 type StoredFile struct {
@@ -188,27 +220,30 @@ type ChatTicket struct {
 }
 
 type Page struct {
-	ID               string    `json:"id"`
-	WorkspaceID      string    `json:"workspaceId"`
-	ParentID         string    `json:"parentId,omitempty"`
-	Title            string    `json:"title"`
-	Body             string    `json:"body"`
-	Status           string    `json:"status"`
-	Position         int       `json:"position"`
-	Version          int       `json:"version"`
-	CollabDocumentID string    `json:"collabDocumentId"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID               string     `json:"id"`
+	WorkspaceID      string     `json:"workspaceId"`
+	ParentID         string     `json:"parentId,omitempty"`
+	Title            string     `json:"title"`
+	Body             string     `json:"body"`
+	Status           string     `json:"status"`
+	Position         int        `json:"position"`
+	Version          int        `json:"version"`
+	CollabDocumentID string     `json:"collabDocumentId"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+	ArchivedAt       *time.Time `json:"archivedAt,omitempty"`
 }
 
 type Document struct {
-	ID               string    `json:"id"`
-	WorkspaceID      string    `json:"workspaceId"`
-	Title            string    `json:"title"`
-	Body             string    `json:"body"`
-	CollabDocumentID string    `json:"collabDocumentId"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID               string     `json:"id"`
+	WorkspaceID      string     `json:"workspaceId"`
+	Title            string     `json:"title"`
+	Body             string     `json:"body"`
+	CollabDocumentID string     `json:"collabDocumentId"`
+	LastEditorSub    string     `json:"lastEditorSub,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+	DeletedAt        *time.Time `json:"deletedAt,omitempty"`
 }
 
 type CollabTicket struct {

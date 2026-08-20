@@ -161,5 +161,10 @@ func (s *Service) RestorePageVersion(sub, pageID string, number, lockVersion int
 	}
 	title := snap.Title
 	body := snap.Body
-	return s.UpdatePage(sub, pageID, &title, &body, nil, nil, lockVersion)
+	status := snap.Status
+	var statusPtr *string
+	if status != "" {
+		statusPtr = &status
+	}
+	return s.UpdatePage(sub, pageID, &title, &body, statusPtr, nil, lockVersion)
 }

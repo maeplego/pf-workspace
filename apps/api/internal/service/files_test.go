@@ -10,7 +10,7 @@ import (
 
 func TestSaveLocalFileRejectsOversize(t *testing.T) {
 	svc := New(memory.New())
-	ws, err := svc.CreateWorkspace("owner-1", "Files")
+	ws, err := svc.CreateWorkspace("owner-1", "Files", "")
 	if err != nil {
 		t.Fatal(err)
 	}

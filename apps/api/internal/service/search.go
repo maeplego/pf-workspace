@@ -38,8 +38,20 @@ func (s *Service) Search(sub, wsID, q, typesRaw string) ([]domain.SearchHit, err
 				return nil, err
 			}
 			hits = append(hits, part...)
+		case "board":
+			part, err := s.searchBoards(wsID, q)
+			if err != nil {
+				return nil, err
+			}
+			hits = append(hits, part...)
 		case "card":
 			part, err := s.searchCards(wsID, q)
+			if err != nil {
+				return nil, err
+			}
+			hits = append(hits, part...)
+		case "channel":
+			part, err := s.searchChannels(wsID, q)
 			if err != nil {
 				return nil, err
 			}
@@ -65,15 +77,27 @@ func (s *Service) searchPages(wsID string, role domain.Role, q string) ([]domain
 	}
 	var hits []domain.SearchHit
 	for _, p := range pages {
-		blob := p.Title + "\n" + p.Body
-		if !domain.ContainsFold(blob, q) {
+		if p.ArchivedAt != nil {
 			continue
 		}
+		titleMatch := domain.ContainsFold(p.Title, q)
+		bodyMatch := domain.ContainsFold(p.Body, q)
+		if !titleMatch && !bodyMatch {
+			continue
+		}
+		matchLabel := "本文"
+		snippet := domain.Snippet(p.Body, q, 80)
+		if titleMatch {
+			matchLabel = "ページ名"
+			snippet = p.Title
+		}
 		hits = append(hits, domain.SearchHit{
-			Type:    "page",
-			ID:      p.ID,
-			Title:   p.Title,
-			Snippet: domain.Snippet(blob, q, 80),
+			Type:       "page",
+			ID:         p.ID,
+			Title:      p.Title,
+			Context:    "Wiki · " + p.Status,
+			MatchLabel: matchLabel,
+			Snippet:    snippet,
 			HrefHints: map[string]string{
 				"workspaceId": wsID,
 				"pageId":      p.ID,
@@ -90,18 +114,54 @@ func (s *Service) searchDocuments(wsID, q string) ([]domain.SearchHit, error) {
 	}
 	var hits []domain.SearchHit
 	for _, d := range docs {
-		blob := d.Title + "\n" + d.Body
-		if !domain.ContainsFold(blob, q) {
+		if d.DeletedAt != nil {
 			continue
 		}
+		titleMatch := domain.ContainsFold(d.Title, q)
+		bodyMatch := domain.ContainsFold(d.Body, q)
+		if !titleMatch && !bodyMatch {
+			continue
+		}
+		matchLabel := "本文"
+		snippet := domain.Snippet(d.Body, q, 80)
+		if titleMatch {
+			matchLabel = "ドキュメント名"
+			snippet = d.Title
+		}
 		hits = append(hits, domain.SearchHit{
-			Type:    "document",
-			ID:      d.ID,
-			Title:   d.Title,
-			Snippet: domain.Snippet(blob, q, 80),
+			Type:       "document",
+			ID:         d.ID,
+			Title:      d.Title,
+			Context:    "Docs",
+			MatchLabel: matchLabel,
+			Snippet:    snippet,
 			HrefHints: map[string]string{
 				"workspaceId": wsID,
 				"documentId":  d.ID,
+			},
+		})
+	}
+	return hits, nil
+}
+
+func (s *Service) searchBoards(wsID, q string) ([]domain.SearchHit, error) {
+	boards, err := s.store.ListBoards(wsID)
+	if err != nil {
+		return nil, err
+	}
+	var hits []domain.SearchHit
+	for _, b := range boards {
+		if b.ArchivedAt != nil || !domain.ContainsFold(b.Name, q) {
+			continue
+		}
+		hits = append(hits, domain.SearchHit{
+			Type:       "board",
+			ID:         b.ID,
+			Title:      b.Name,
+			MatchLabel: "ボード名",
+			Snippet:    b.Name,
+			HrefHints: map[string]string{
+				"boardId": b.ID,
 			},
 		})
 	}
@@ -113,20 +173,66 @@ func (s *Service) searchCards(wsID, q string) ([]domain.SearchHit, error) {
 	if err != nil {
 		return nil, err
 	}
+	boards, err := s.store.ListBoards(wsID)
+	if err != nil {
+		return nil, err
+	}
+	boardName := map[string]string{}
+	archived := map[string]bool{}
+	for _, b := range boards {
+		boardName[b.ID] = b.Name
+		archived[b.ID] = b.ArchivedAt != nil
+	}
 	var hits []domain.SearchHit
 	for _, c := range cards {
+		if archived[c.BoardID] {
+			continue
+		}
 		blob := c.Title + "\n" + c.Description
 		if !domain.ContainsFold(blob, q) {
 			continue
 		}
+		bname := boardName[c.BoardID]
+		matchLabel := "カード名"
+		snippet := c.Title
+		if !domain.ContainsFold(c.Title, q) {
+			matchLabel = "説明"
+			snippet = domain.Snippet(c.Description, q, 80)
+		}
 		hits = append(hits, domain.SearchHit{
-			Type:    "card",
-			ID:      c.ID,
-			Title:   c.Title,
-			Snippet: domain.Snippet(blob, q, 80),
+			Type:       "card",
+			ID:         c.ID,
+			Title:      c.Title,
+			Context:    "ボード · " + bname,
+			MatchLabel: matchLabel,
+			Snippet:    snippet,
 			HrefHints: map[string]string{
 				"boardId": c.BoardID,
 				"cardId":  c.ID,
+			},
+		})
+	}
+	return hits, nil
+}
+
+func (s *Service) searchChannels(wsID, q string) ([]domain.SearchHit, error) {
+	channels, err := s.store.ListChannels(wsID)
+	if err != nil {
+		return nil, err
+	}
+	var hits []domain.SearchHit
+	for _, ch := range channels {
+		if !domain.ContainsFold(ch.Name, q) {
+			continue
+		}
+		hits = append(hits, domain.SearchHit{
+			Type:       "channel",
+			ID:         ch.ID,
+			Title:      ch.Name,
+			MatchLabel: "チャンネル名",
+			Snippet:    ch.Name,
+			HrefHints: map[string]string{
+				"channelId": ch.ID,
 			},
 		})
 	}
@@ -148,12 +254,13 @@ func (s *Service) searchMessages(wsID, q string) ([]domain.SearchHit, error) {
 			if !domain.ContainsFold(m.Body, q) {
 				continue
 			}
-			title := ch.Name
 			hits = append(hits, domain.SearchHit{
-				Type:    "message",
-				ID:      m.ID,
-				Title:   title,
-				Snippet: domain.Snippet(m.Body, q, 80),
+				Type:       "message",
+				ID:         m.ID,
+				Title:      m.Body,
+				Context:    "チャンネル · " + ch.Name,
+				MatchLabel: "メッセージ",
+				Snippet:    domain.Snippet(m.Body, q, 80),
 				HrefHints: map[string]string{
 					"channelId": ch.ID,
 					"seq":       strconv.Itoa(m.Seq),

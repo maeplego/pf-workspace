@@ -47,9 +47,9 @@ type Props = {
 };
 
 function ColumnDrop({ id, children }: { id: string; children: React.ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id });
+  const { setNodeRef, isOver } = useDroppable({ id: `col:${id}` });
   return (
-    <div ref={setNodeRef} style={{ minHeight: 48, background: isOver ? "#dde1e6" : undefined, borderRadius: 4 }}>
+    <div ref={setNodeRef} data-column-id={id} style={{ minHeight: 72, background: isOver ? "#dde1e6" : undefined, borderRadius: 4 }}>
       {children}
     </div>
   );
@@ -80,8 +80,17 @@ function SortableCard({
     cursor: readOnly ? "pointer" : "grab",
   };
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners} onClick={() => onSelect(card)}>
-      {card.title}
+    <div ref={setNodeRef} style={style}>
+      <div style={{ display: "flex", gap: "0.35rem", alignItems: "flex-start" }}>
+        {!readOnly ? (
+          <button type="button" aria-label="ドラッグして列を変更" {...attributes} {...listeners} style={{ cursor: "grab", border: "none", background: "transparent", padding: 0 }}>
+            ⋮⋮
+          </button>
+        ) : null}
+        <button type="button" onClick={() => onSelect(card)} style={{ flex: 1, textAlign: "left", border: "none", background: "transparent", padding: 0, cursor: "pointer" }}>
+          {card.title}
+        </button>
+      </div>
     </div>
   );
 }
@@ -124,6 +133,10 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprint
     let targetColumnId = String(over.id);
     let position = 0;
 
+    if (targetColumnId.startsWith("col:")) {
+      targetColumnId = targetColumnId.slice(4);
+    }
+
     if (columnIds.includes(targetColumnId)) {
       const col = columns.find((c) => c.id === targetColumnId);
       position = col?.cards.length ?? 0;
@@ -165,18 +178,29 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprint
 
   function saveSelected() {
     if (!selected) return;
+    const current = cardMap.get(selected.id);
     startTransition(async () => {
-      await updateCardDetails(
-        boardId,
-        selected.id,
-        selected.title,
-        selected.description,
-        selected.version,
-        selected.sprintId || "",
-        devUser,
-      );
-      setSelected(null);
-      router.refresh();
+      try {
+        if (current && current.columnId !== selected.columnId) {
+          await moveCard(boardId, selected.id, selected.columnId, 0, selected.version, devUser);
+        } else {
+          await updateCardDetails(
+            boardId,
+            selected.id,
+            selected.title,
+            selected.description,
+            selected.version,
+            selected.sprintId || "",
+            devUser,
+          );
+        }
+        setSelected(null);
+        router.refresh();
+      } catch (e) {
+        console.error(e);
+        alert("保存に失敗しました（バージョン競合の可能性）");
+        router.refresh();
+      }
     });
   }
 
@@ -198,40 +222,39 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprint
       <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd}>
         <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start", overflowX: "auto" }}>
           {columns.map((col) => (
-            <div
-              key={col.id}
-              style={{
-                minWidth: 260,
-                background: "#ebecf0",
-                borderRadius: 8,
-                padding: "0.75rem",
-              }}
-            >
-              <h3 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem" }}>{col.name}</h3>
-              <SortableContext items={col.cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                <ColumnDrop id={col.id}>
+            <ColumnDrop key={col.id} id={col.id}>
+              <div
+                style={{
+                  minWidth: 260,
+                  background: "#ebecf0",
+                  borderRadius: 8,
+                  padding: "0.75rem",
+                }}
+              >
+                <h3 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem" }}>{col.name}</h3>
+                <SortableContext items={col.cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                   {col.cards.map((card) => (
                     <SortableCard key={card.id} card={card} readOnly={readOnly} onSelect={setSelected} />
                   ))}
-                </ColumnDrop>
-              </SortableContext>
-              {!readOnly ? (
-                <div style={{ display: "flex", gap: "0.35rem", marginTop: "0.5rem" }}>
-                  <input
-                    value={newTitles[col.id] || ""}
-                    onChange={(e) => setNewTitles((prev) => ({ ...prev, [col.id]: e.target.value }))}
-                    placeholder="New card"
-                    style={{ flex: 1, padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") addCard(col.id);
-                    }}
-                  />
-                  <button type="button" onClick={() => addCard(col.id)} disabled={pending}>
-                    +
-                  </button>
-                </div>
-              ) : null}
-            </div>
+                </SortableContext>
+                {!readOnly ? (
+                  <div style={{ display: "flex", gap: "0.35rem", marginTop: "0.5rem" }}>
+                    <input
+                      value={newTitles[col.id] || ""}
+                      onChange={(e) => setNewTitles((prev) => ({ ...prev, [col.id]: e.target.value }))}
+                      placeholder="New card"
+                      style={{ flex: 1, padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") addCard(col.id);
+                      }}
+                    />
+                    <button type="button" onClick={() => addCard(col.id)} disabled={pending}>
+                      +
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </ColumnDrop>
           ))}
         </div>
         <DragOverlay>
@@ -273,6 +296,20 @@ export function KanbanBoard({ boardId, boardName, workspaceName, columns, sprint
                 rows={4}
                 style={{ display: "block", width: "100%", marginTop: "0.25rem", padding: "0.5rem" }}
               />
+            </label>
+            <label style={{ display: "block", marginBottom: "0.75rem" }}>
+              列
+              <select
+                value={selected.columnId}
+                onChange={(e) => setSelected({ ...selected, columnId: e.target.value })}
+                style={{ display: "block", width: "100%", marginTop: "0.25rem", padding: "0.5rem" }}
+              >
+                {columns.map((col) => (
+                  <option key={col.id} value={col.id}>
+                    {col.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <label style={{ display: "block", marginBottom: "0.75rem" }}>
               スプリント

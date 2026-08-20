@@ -95,18 +95,19 @@ func (s *Store) workspaceExists(ctx context.Context, wsID string) error {
 	return nil
 }
 
-func (s *Store) CreateWorkspace(name, ownerSub string, now time.Time) (domain.Workspace, error) {
+func (s *Store) CreateWorkspace(name, ownerSub, orgID string, now time.Time) (domain.Workspace, error) {
 	ctx := context.Background()
-	ws := domain.Workspace{ID: id.New(), Name: name, CreatedAt: now}
+	ws := domain.Workspace{ID: id.New(), Name: name, OrgID: orgID, CreatedAt: now}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.Workspace{}, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, "INSERT INTO workspaces (id, name, created_at) VALUES ($1,$2,$3)", ws.ID, ws.Name, ws.CreatedAt); err != nil {
+	if _, err := tx.Exec(ctx, "INSERT INTO workspaces (id, name, org_id, created_at) VALUES ($1,$2,$3,$4)", ws.ID, ws.Name, ws.OrgID, ws.CreatedAt); err != nil {
 		return domain.Workspace{}, err
 	}
-	if _, err := tx.Exec(ctx, "INSERT INTO members (workspace_id, sub, role, joined_at) VALUES ($1,$2,$3,$4)", ws.ID, ownerSub, domain.RoleOwner, now); err != nil {
+	ownerName := domain.DevDisplayName(ownerSub)
+	if _, err := tx.Exec(ctx, "INSERT INTO members (workspace_id, sub, role, display_name, joined_at) VALUES ($1,$2,$3,$4,$5)", ws.ID, ownerSub, domain.RoleOwner, ownerName, now); err != nil {
 		return domain.Workspace{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -118,7 +119,7 @@ func (s *Store) CreateWorkspace(name, ownerSub string, now time.Time) (domain.Wo
 func (s *Store) ListWorkspacesForSub(sub string) []domain.Workspace {
 	ctx := context.Background()
 	rows, err := s.pool.Query(ctx, `
-		SELECT w.id, w.name, w.created_at
+		SELECT w.id, w.name, w.org_id, w.created_at
 		FROM workspaces w
 		JOIN members m ON m.workspace_id = w.id
 		WHERE m.sub = $1
@@ -130,7 +131,7 @@ func (s *Store) ListWorkspacesForSub(sub string) []domain.Workspace {
 	var out []domain.Workspace
 	for rows.Next() {
 		var w domain.Workspace
-		if err := rows.Scan(&w.ID, &w.Name, &w.CreatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.Name, &w.OrgID, &w.CreatedAt); err != nil {
 			return out
 		}
 		out = append(out, w)
@@ -140,8 +141,8 @@ func (s *Store) ListWorkspacesForSub(sub string) []domain.Workspace {
 
 func (s *Store) GetWorkspace(wsID string) (domain.Workspace, error) {
 	var w domain.Workspace
-	err := s.pool.QueryRow(context.Background(), "SELECT id, name, created_at FROM workspaces WHERE id = $1", wsID).
-		Scan(&w.ID, &w.Name, &w.CreatedAt)
+	err := s.pool.QueryRow(context.Background(), "SELECT id, name, org_id, created_at FROM workspaces WHERE id = $1", wsID).
+		Scan(&w.ID, &w.Name, &w.OrgID, &w.CreatedAt)
 	if err != nil {
 		return domain.Workspace{}, mapErr(err)
 	}
@@ -169,7 +170,7 @@ func (s *Store) ListMembers(wsID string) ([]domain.Member, error) {
 	if err := s.workspaceExists(ctx, wsID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, "SELECT workspace_id, sub, role, joined_at FROM members WHERE workspace_id = $1 ORDER BY joined_at", wsID)
+	rows, err := s.pool.Query(ctx, "SELECT workspace_id, sub, role, display_name, joined_at FROM members WHERE workspace_id = $1 ORDER BY joined_at", wsID)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +178,7 @@ func (s *Store) ListMembers(wsID string) ([]domain.Member, error) {
 	var out []domain.Member
 	for rows.Next() {
 		var m domain.Member
-		if err := rows.Scan(&m.WorkspaceID, &m.Sub, &m.Role, &m.JoinedAt); err != nil {
+		if err := rows.Scan(&m.WorkspaceID, &m.Sub, &m.Role, &m.DisplayName, &m.JoinedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -185,13 +186,31 @@ func (s *Store) ListMembers(wsID string) ([]domain.Member, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) GetMember(wsID, sub string) (domain.Member, error) {
+	ctx := context.Background()
+	if err := s.workspaceExists(ctx, wsID); err != nil {
+		return domain.Member{}, err
+	}
+	var m domain.Member
+	err := s.pool.QueryRow(ctx, "SELECT workspace_id, sub, role, display_name, joined_at FROM members WHERE workspace_id = $1 AND sub = $2", wsID, sub).
+		Scan(&m.WorkspaceID, &m.Sub, &m.Role, &m.DisplayName, &m.JoinedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Member{}, err
+	}
+	return m, nil
+}
+
 func (s *Store) AddMember(wsID, sub string, role domain.Role, now time.Time) (domain.Member, error) {
 	ctx := context.Background()
 	if err := s.workspaceExists(ctx, wsID); err != nil {
 		return domain.Member{}, err
 	}
-	m := domain.Member{WorkspaceID: wsID, Sub: sub, Role: role, JoinedAt: now}
-	_, err := s.pool.Exec(ctx, "INSERT INTO members (workspace_id, sub, role, joined_at) VALUES ($1,$2,$3,$4)", wsID, sub, role, now)
+	displayName := domain.DevDisplayName(sub)
+	m := domain.Member{WorkspaceID: wsID, Sub: sub, Role: role, DisplayName: displayName, JoinedAt: now}
+	_, err := s.pool.Exec(ctx, "INSERT INTO members (workspace_id, sub, role, display_name, joined_at) VALUES ($1,$2,$3,$4,$5)", wsID, sub, role, displayName, now)
 	if isUnique(err) {
 		return domain.Member{}, domain.ErrConflict
 	}
@@ -199,6 +218,152 @@ func (s *Store) AddMember(wsID, sub string, role domain.Role, now time.Time) (do
 		return domain.Member{}, err
 	}
 	return m, nil
+}
+
+func (s *Store) UpdateMemberDisplayName(wsID, sub, displayName string) (domain.Member, error) {
+	ctx := context.Background()
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		return domain.Member{}, domain.ErrInvalid
+	}
+	tag, err := s.pool.Exec(ctx, "UPDATE members SET display_name = $3 WHERE workspace_id = $1 AND sub = $2", wsID, sub, displayName)
+	if err != nil {
+		return domain.Member{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	return s.GetMember(wsID, sub)
+}
+
+func (s *Store) CreateInvitation(wsID, tokenHash string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time, invitedBy string, now time.Time) (domain.Invitation, error) {
+	ctx := context.Background()
+	if err := s.workspaceExists(ctx, wsID); err != nil {
+		return domain.Invitation{}, err
+	}
+	inv := domain.Invitation{
+		ID:           id.New(),
+		WorkspaceID:  wsID,
+		TokenHash:    tokenHash,
+		Role:         role,
+		InvitedEmail: invitedEmail,
+		MaxUses:      maxUses,
+		UseCount:     0,
+		ExpiresAt:    expiresAt,
+		InvitedBy:    invitedBy,
+		CreatedAt:    now,
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO invitations (id, workspace_id, token_hash, role, invited_email, max_uses, use_count, expires_at, invited_by, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		inv.ID, inv.WorkspaceID, inv.TokenHash, inv.Role, inv.InvitedEmail, inv.MaxUses, inv.UseCount, inv.ExpiresAt, inv.InvitedBy, inv.CreatedAt)
+	if isUnique(err) {
+		return domain.Invitation{}, domain.ErrConflict
+	}
+	if err != nil {
+		return domain.Invitation{}, err
+	}
+	return inv, nil
+}
+
+func (s *Store) ListInvitations(wsID string) ([]domain.Invitation, error) {
+	ctx := context.Background()
+	if err := s.workspaceExists(ctx, wsID); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id, workspace_id, token_hash, role, invited_email, max_uses, use_count, expires_at, invited_by, created_at, revoked_at
+		FROM invitations WHERE workspace_id = $1 ORDER BY created_at DESC`, wsID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Invitation
+	for rows.Next() {
+		var inv domain.Invitation
+		if err := rows.Scan(&inv.ID, &inv.WorkspaceID, &inv.TokenHash, &inv.Role, &inv.InvitedEmail, &inv.MaxUses, &inv.UseCount, &inv.ExpiresAt, &inv.InvitedBy, &inv.CreatedAt, &inv.RevokedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, inv)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetInvitationByTokenHash(tokenHash string) (domain.Invitation, error) {
+	var inv domain.Invitation
+	err := s.pool.QueryRow(context.Background(), `SELECT id, workspace_id, token_hash, role, invited_email, max_uses, use_count, expires_at, invited_by, created_at, revoked_at
+		FROM invitations WHERE token_hash = $1`, tokenHash).
+		Scan(&inv.ID, &inv.WorkspaceID, &inv.TokenHash, &inv.Role, &inv.InvitedEmail, &inv.MaxUses, &inv.UseCount, &inv.ExpiresAt, &inv.InvitedBy, &inv.CreatedAt, &inv.RevokedAt)
+	if err != nil {
+		return domain.Invitation{}, mapErr(err)
+	}
+	return inv, nil
+}
+
+func (s *Store) AcceptInvitation(inviteID, sub string, now time.Time) (domain.Invitation, domain.Member, bool, error) {
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Invitation{}, domain.Member{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	var inv domain.Invitation
+	err = tx.QueryRow(ctx, `SELECT id, workspace_id, token_hash, role, invited_email, max_uses, use_count, expires_at, invited_by, created_at, revoked_at
+		FROM invitations WHERE id = $1 FOR UPDATE`, inviteID).
+		Scan(&inv.ID, &inv.WorkspaceID, &inv.TokenHash, &inv.Role, &inv.InvitedEmail, &inv.MaxUses, &inv.UseCount, &inv.ExpiresAt, &inv.InvitedBy, &inv.CreatedAt, &inv.RevokedAt)
+	if err != nil {
+		return domain.Invitation{}, domain.Member{}, false, mapErr(err)
+	}
+	if inv.RevokedAt != nil || !now.Before(inv.ExpiresAt) || inv.UseCount >= inv.MaxUses {
+		return domain.Invitation{}, domain.Member{}, false, domain.ErrForbidden
+	}
+	displayName := domain.DevDisplayName(sub)
+	member := domain.Member{WorkspaceID: inv.WorkspaceID, Sub: sub, Role: inv.Role, DisplayName: displayName, JoinedAt: now}
+	cmd, err := tx.Exec(ctx, `INSERT INTO members (workspace_id, sub, role, display_name, joined_at) VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (workspace_id, sub) DO NOTHING`, inv.WorkspaceID, sub, inv.Role, displayName, now)
+	if err != nil {
+		return domain.Invitation{}, domain.Member{}, false, err
+	}
+	joined := cmd.RowsAffected() == 1
+	if joined {
+		if _, err := tx.Exec(ctx, `UPDATE invitations SET use_count = use_count + 1 WHERE id = $1`, inv.ID); err != nil {
+			return domain.Invitation{}, domain.Member{}, false, err
+		}
+		inv.UseCount++
+	} else {
+		err = tx.QueryRow(ctx, "SELECT workspace_id, sub, role, display_name, joined_at FROM members WHERE workspace_id = $1 AND sub = $2", inv.WorkspaceID, sub).
+			Scan(&member.WorkspaceID, &member.Sub, &member.Role, &member.DisplayName, &member.JoinedAt)
+		if err != nil {
+			return domain.Invitation{}, domain.Member{}, false, mapErr(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Invitation{}, domain.Member{}, false, err
+	}
+	return inv, member, joined, nil
+}
+
+func (s *Store) AddAuditEvent(event domain.AuditEvent) error {
+	_, err := s.pool.Exec(context.Background(), `INSERT INTO audit_events (id, workspace_id, actor_sub, type, target_sub, invite_id, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		event.ID, event.WorkspaceID, event.ActorSub, event.Type, event.TargetSub, event.InviteID, event.CreatedAt)
+	return err
+}
+
+func (s *Store) ListAuditEvents(wsID string) ([]domain.AuditEvent, error) {
+	rows, err := s.pool.Query(context.Background(), `SELECT id, workspace_id, actor_sub, type, target_sub, invite_id, created_at
+		FROM audit_events WHERE workspace_id = $1 ORDER BY created_at DESC`, wsID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.AuditEvent
+	for rows.Next() {
+		var ev domain.AuditEvent
+		if err := rows.Scan(&ev.ID, &ev.WorkspaceID, &ev.ActorSub, &ev.Type, &ev.TargetSub, &ev.InviteID, &ev.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) CreateBoard(wsID, name string, now time.Time) (domain.Board, []domain.Column, error) {
@@ -230,12 +395,36 @@ func (s *Store) CreateBoard(wsID, name string, now time.Time) (domain.Board, []d
 	return board, cols, nil
 }
 
+func (s *Store) ArchiveBoard(boardID string, now time.Time) error {
+	ctx := context.Background()
+	cmd, err := s.pool.Exec(ctx, "UPDATE boards SET archived_at = $2 WHERE id = $1 AND archived_at IS NULL", boardID, now)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() != 1 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UnarchiveBoard(boardID string) error {
+	ctx := context.Background()
+	cmd, err := s.pool.Exec(ctx, "UPDATE boards SET archived_at = NULL WHERE id = $1", boardID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() != 1 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) ListBoards(wsID string) ([]domain.Board, error) {
 	ctx := context.Background()
 	if err := s.workspaceExists(ctx, wsID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, "SELECT id, workspace_id, name, created_at FROM boards WHERE workspace_id = $1 ORDER BY created_at", wsID)
+	rows, err := s.pool.Query(ctx, "SELECT id, workspace_id, name, created_at, archived_at FROM boards WHERE workspace_id = $1 ORDER BY created_at", wsID)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +432,7 @@ func (s *Store) ListBoards(wsID string) ([]domain.Board, error) {
 	var out []domain.Board
 	for rows.Next() {
 		var b domain.Board
-		if err := rows.Scan(&b.ID, &b.WorkspaceID, &b.Name, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.WorkspaceID, &b.Name, &b.CreatedAt, &b.ArchivedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
@@ -271,8 +460,8 @@ const cardCols = `id, column_id, board_id, title, description, position, version
 func (s *Store) GetBoardDetail(boardID string) (domain.BoardDetail, error) {
 	ctx := context.Background()
 	var board domain.Board
-	err := s.pool.QueryRow(ctx, "SELECT id, workspace_id, name, created_at FROM boards WHERE id = $1", boardID).
-		Scan(&board.ID, &board.WorkspaceID, &board.Name, &board.CreatedAt)
+	err := s.pool.QueryRow(ctx, "SELECT id, workspace_id, name, created_at, archived_at FROM boards WHERE id = $1", boardID).
+		Scan(&board.ID, &board.WorkspaceID, &board.Name, &board.CreatedAt, &board.ArchivedAt)
 	if err != nil {
 		return domain.BoardDetail{}, mapErr(err)
 	}
@@ -541,7 +730,7 @@ func (s *Store) ListCardsInWorkspace(wsID string) ([]domain.Card, error) {
 	if err := s.workspaceExists(ctx, wsID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, "SELECT "+cardCols+" FROM cards c JOIN boards b ON b.id = c.board_id WHERE b.workspace_id = $1", wsID)
+	rows, err := s.pool.Query(ctx, "SELECT c.id, c.column_id, c.board_id, c.title, c.description, c.position, c.version, c.sprint_id, c.completed_at, c.assignee_sub, c.priority, c.due_date, c.created_at, c.updated_at FROM cards c JOIN boards b ON b.id = c.board_id WHERE b.workspace_id = $1", wsID)
 	if err != nil {
 		return nil, err
 	}

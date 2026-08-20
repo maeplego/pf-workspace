@@ -3,18 +3,54 @@
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  org_id TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS members (
   workspace_id TEXT NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
   sub TEXT NOT NULL,
   role TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
   joined_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (workspace_id, sub)
 );
 
+ALTER TABLE members ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS members_sub_idx ON members (sub);
+
+CREATE TABLE IF NOT EXISTS invitations (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL,
+  max_uses INTEGER NOT NULL,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  invited_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ
+);
+
+ALTER TABLE invitations ADD COLUMN IF NOT EXISTS invited_email TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS invitations_workspace_idx ON invitations (workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS invitations_expires_idx ON invitations (expires_at);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
+  actor_sub TEXT NOT NULL,
+  type TEXT NOT NULL,
+  target_sub TEXT NOT NULL DEFAULT '',
+  invite_id TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS audit_events_workspace_idx ON audit_events (workspace_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS boards (
   id TEXT PRIMARY KEY,
@@ -22,6 +58,8 @@ CREATE TABLE IF NOT EXISTS boards (
   name TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE boards ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS boards_workspace_id_idx ON boards (workspace_id);
 
@@ -83,12 +121,15 @@ CREATE TABLE IF NOT EXISTS pages (
 
 CREATE INDEX IF NOT EXISTS pages_workspace_id_idx ON pages (workspace_id);
 
+ALTER TABLE pages ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   body TEXT NOT NULL DEFAULT '',
   collab_document_id TEXT NOT NULL UNIQUE,
+  last_editor_sub TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
@@ -159,7 +200,12 @@ CREATE TABLE IF NOT EXISTS page_versions (
   number INTEGER NOT NULL,
   title TEXT NOT NULL,
   body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT '',
   sub TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (page_id, number)
 );
+
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT '';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_editor_sub TEXT NOT NULL DEFAULT '';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;

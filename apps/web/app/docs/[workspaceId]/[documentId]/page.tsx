@@ -27,6 +27,9 @@ export default async function DocViewPage({
     title: string;
     body: string;
     collabDocumentId: string;
+    lastEditorSub?: string;
+    updatedAt?: string;
+    deletedAt?: string;
   };
   const { members } = (await apiFetchForPage(`/v1/workspaces/${workspaceId}/members`, devUser)) as {
     members: { sub: string; role: string }[];
@@ -52,8 +55,10 @@ export default async function DocViewPage({
         collab={collab}
         collabWsUrl={collabWsUrl}
         userName={session!.displayName || session!.sub}
-        readOnly={!!readOnly}
+        readOnly={!!readOnly || !!doc.deletedAt}
         devUser={devUser}
+        lastEditorSub={doc.lastEditorSub}
+        updatedAt={doc.updatedAt}
       />
     </DocsShell>
   );

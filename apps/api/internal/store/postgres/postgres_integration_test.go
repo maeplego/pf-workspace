@@ -33,7 +33,7 @@ func TestPostgresStorePersistsWorkspaceBoardAndMessages(t *testing.T) {
 	}
 	defer store.Close()
 	now := time.Now().UTC()
-	ws, err := store.CreateWorkspace("pg-demo", "owner-pg", now)
+	ws, err := store.CreateWorkspace("pg-demo", "owner-pg", "", now)
 	if err != nil {
 		t.Fatal(err)
 	}

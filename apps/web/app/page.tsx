@@ -2,12 +2,14 @@ import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, addMember, createBoard, createWorkspace } from "./actions";
+import { apiFetchForPage, createBoard, createInvitation, createWorkspace, syncMemberDisplayName, unarchiveBoard } from "./actions";
+import { ambiguousDisplayNames, memberLabel } from "../lib/display";
 import { oidcEnabled } from "../lib/oidc/env";
 import { getWorkspaceSession } from "../lib/session";
 
 type Workspace = { id: string; name: string };
 type Board = { id: string; name: string; workspaceId: string };
+type Member = { sub: string; role: string; displayName?: string };
 
 function homeHref(devUser?: string) {
   return devUser ? `/?user=${encodeURIComponent(devUser)}` : "/";
@@ -16,7 +18,7 @@ function homeHref(devUser?: string) {
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ user?: string; error?: string }>;
+  searchParams: Promise<{ user?: string; error?: string; createdInvite?: string }>;
 }) {
   noStore();
   const sp = await searchParams;
@@ -26,14 +28,29 @@ export default async function HomePage({
   }
 
   const devUser = session!.devMode ? session!.sub : undefined;
-  const { workspaces } = (await apiFetchForPage("/v1/workspaces", devUser)) as { workspaces: Workspace[] };
+  const displayName = session!.displayName || session!.sub;
+  const wsPayload = (await apiFetchForPage("/v1/workspaces", devUser)) as { workspaces?: Workspace[] | null };
+  const workspaces = wsPayload.workspaces ?? [];
 
   const boardsByWs: Record<string, Board[]> = {};
+  const archivedByWs: Record<string, Board[]> = {};
+  const membersByWs: Record<string, Member[]> = {};
   for (const ws of workspaces) {
-    const { boards } = (await apiFetchForPage(`/v1/workspaces/${ws.id}/boards`, devUser)) as {
-      boards: Board[];
+    try {
+      await syncMemberDisplayName(ws.id, displayName, devUser);
+    } catch {
+      // ignore if not a member yet
+    }
+    const data = (await apiFetchForPage(`/v1/workspaces/${ws.id}/boards`, devUser)) as {
+      boards?: Board[] | null;
+      archivedBoards?: Board[] | null;
     };
-    boardsByWs[ws.id] = boards;
+    boardsByWs[ws.id] = data.boards ?? [];
+    archivedByWs[ws.id] = data.archivedBoards ?? [];
+    const mem = (await apiFetchForPage(`/v1/workspaces/${ws.id}/members`, devUser)) as {
+      members?: Member[] | null;
+    };
+    membersByWs[ws.id] = mem.members ?? [];
   }
 
   async function createWorkspaceAction(formData: FormData) {
@@ -48,11 +65,15 @@ export default async function HomePage({
     await createBoard(wsId, formData, devUser);
   }
 
-  async function addMemberAction(formData: FormData) {
+  async function createInvitationAction(formData: FormData) {
     "use server";
     const wsId = String(formData.get("workspaceId") || "");
     if (!wsId) return;
-    await addMember(wsId, formData, devUser);
+    const token = await createInvitation(wsId, formData, devUser);
+    const q = new URLSearchParams();
+    if (devUser) q.set("user", devUser);
+    q.set("createdInvite", token);
+    redirect(`/?${q.toString()}`);
   }
 
   return (
@@ -78,6 +99,14 @@ export default async function HomePage({
           )}
         </p>
         {sp.error ? <p className="error">ログインエラー: {sp.error}</p> : null}
+        {sp.createdInvite ? (
+          <p className="muted">
+            招待リンクを発行しました:{" "}
+            <code style={{ userSelect: "all" }}>
+              {`${process.env.WORKSPACE_PUBLIC_BASE_URL || "http://localhost:3005"}/join/${sp.createdInvite}`}
+            </code>
+          </p>
+        ) : null}
       </section>
 
       <section className="card" style={{ marginBottom: "1.5rem" }}>
@@ -123,22 +152,57 @@ export default async function HomePage({
             </ul>
             <form action={createBoardAction} className="row" style={{ marginTop: "0.75rem" }}>
               <input type="hidden" name="workspaceId" value={ws.id} />
-              <input name="name" placeholder="Board name" style={{ flex: 1 }} />
+              <input name="name" placeholder="Board name" required style={{ flex: 1 }} />
               <button type="submit" className="btn btn-secondary">
                 ボード追加
               </button>
             </form>
-            <form action={addMemberAction} className="row" style={{ marginTop: "0.5rem" }}>
-              <input type="hidden" name="workspaceId" value={ws.id} />
-              <input name="sub" placeholder="demo-user-b" style={{ flex: 1 }} />
-              <select name="role" defaultValue="member" style={{ width: "auto" }}>
-                <option value="member">member</option>
-                <option value="guest">guest</option>
-              </select>
-              <button type="submit" className="btn btn-secondary">
-                メンバー追加
-              </button>
-            </form>
+            {(archivedByWs[ws.id] || []).length > 0 ? (
+              <div className="muted" style={{ marginTop: "0.75rem" }}>
+                <p style={{ marginBottom: "0.35rem" }}>アーカイブしたボード</p>
+                {(archivedByWs[ws.id] || []).map((b) => (
+                  <form key={b.id} action={unarchiveBoard.bind(null, b.id, devUser)} className="row" style={{ marginBottom: "0.35rem" }}>
+                    <span style={{ flex: 1 }}>{b.name}</span>
+                    <button type="submit" className="btn btn-secondary">
+                      戻す
+                    </button>
+                  </form>
+                ))}
+              </div>
+            ) : null}
+            <h3 style={{ fontSize: "0.95rem" }}>メンバー</h3>
+            <ul style={{ paddingLeft: "1.2rem" }}>
+              {(membersByWs[ws.id] || []).map((m) => {
+                const dupes = ambiguousDisplayNames(membersByWs[ws.id] || []);
+                const label = memberLabel(m, dupes);
+                return (
+                  <li key={m.sub}>
+                    <Link href={devUser ? `/members/${ws.id}/${encodeURIComponent(m.sub)}?user=${devUser}` : `/members/${ws.id}/${encodeURIComponent(m.sub)}`}>
+                      {label}
+                    </Link>{" "}
+                    <span className="muted">({m.role})</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="muted">
+              guest は published の Wiki 閲覧とボード参照だけです。メンバー参加は招待リンク経由になり、sub の手入力は不要です。
+            </p>
+            {(membersByWs[ws.id] || []).some((m) => m.sub === session!.sub && m.role === "owner") ? (
+              <form action={createInvitationAction} className="row" style={{ marginTop: "0.5rem" }}>
+                <input type="hidden" name="workspaceId" value={ws.id} />
+                <select name="role" defaultValue="member" style={{ width: "auto" }}>
+                  <option value="member">member</option>
+                  <option value="guest">guest</option>
+                </select>
+                <input name="maxUses" type="number" min={1} max={100} defaultValue={1} style={{ width: 100 }} />
+                <input name="ttlHours" type="number" min={1} max={336} defaultValue={72} style={{ width: 100 }} />
+                <input name="invitedEmail" type="email" placeholder="招待先メール（任意）" style={{ width: 220 }} />
+                <button type="submit" className="btn btn-secondary">
+                  招待リンク発行
+                </button>
+              </form>
+            ) : null}
           </section>
         ))
       )}

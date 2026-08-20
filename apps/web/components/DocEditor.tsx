@@ -4,7 +4,8 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useState, useTransition } from "react";
 
-import { updateDocumentTitle } from "../app/actions";
+import { trashDocument, updateDocumentTitle } from "../app/actions";
+import { ConfirmDelete } from "./ConfirmDelete";
 import { MarkdownPreview } from "./MarkdownPreview";
 
 const CollabMarkdownEditor = dynamic(() => import("./CollabMarkdownEditor").then((m) => m.CollabMarkdownEditor), {
@@ -28,6 +29,8 @@ type Props = {
   userName: string;
   readOnly: boolean;
   devUser?: string;
+  lastEditorSub?: string;
+  updatedAt?: string;
 };
 
 export function DocEditor({
@@ -41,6 +44,8 @@ export function DocEditor({
   userName,
   readOnly,
   devUser,
+  lastEditorSub,
+  updatedAt,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -77,6 +82,19 @@ export function DocEditor({
       ) : (
         <h1>{title}</h1>
       )}
+      <p className="muted">
+        最終更新: {updatedAt ? new Date(updatedAt).toLocaleString() : "—"}
+        {lastEditorSub ? ` · 最後に同期した人: ${lastEditorSub}` : " · 共同編集中の名前はカーソル色で分かります"}
+      </p>
+      {!readOnly ? (
+        <div style={{ marginBottom: "0.75rem" }}>
+          <ConfirmDelete
+            label="ゴミ箱へ"
+            message="ドキュメントをゴミ箱へ移します。左のゴミ箱から復元できます。完全削除しません。"
+            onConfirm={trashDocument.bind(null, workspaceId, documentId, devUser)}
+          />
+        </div>
+      ) : null}
       {useCollab && collab && collabWsUrl ? (
         <CollabMarkdownEditor
           wsUrl={collabWsUrl}

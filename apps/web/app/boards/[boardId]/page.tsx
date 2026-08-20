@@ -1,7 +1,8 @@
 import { unstable_noStore as noStore } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage } from "../../actions";
+import { apiFetchForPage, archiveBoard } from "../../actions";
+import { ConfirmDelete } from "../../../components/ConfirmDelete";
 import { KanbanBoard, type ColumnView } from "../../../components/KanbanBoard";
 import { oidcEnabled } from "../../../lib/oidc/env";
 import { getWorkspaceSession } from "../../../lib/session";
@@ -26,6 +27,7 @@ export default async function BoardPage({
     id: string;
     name: string;
     workspaceId: string;
+    archivedAt?: string;
     columns: ColumnView[];
   };
   const workspace = (await apiFetchForPage(`/v1/workspaces/${board.workspaceId}`, devUser)) as { name: string };
@@ -46,6 +48,16 @@ export default async function BoardPage({
 
   return (
     <div className="shell">
+      {board.archivedAt ? <p className="muted">このボードはアーカイブ済みです。ホームから戻せます。</p> : null}
+      {!readOnly && !board.archivedAt ? (
+        <div style={{ marginBottom: "0.75rem" }}>
+          <ConfirmDelete
+            label="ボードをアーカイブ"
+            message="ボードをアーカイブします。カードは残ります。ホームから戻せます。"
+            onConfirm={archiveBoard.bind(null, board.id, devUser)}
+          />
+        </div>
+      ) : null}
       <KanbanBoard
         boardId={board.id}
         boardName={board.name}

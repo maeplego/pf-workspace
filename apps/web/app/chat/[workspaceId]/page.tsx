@@ -22,7 +22,7 @@ export default async function ChatIndexPage({
   const devUser = session!.devMode ? session!.sub : undefined;
   return (
     <ChatShell workspaceId={workspaceId} sessionSub={session!.sub} devUser={devUser}>
-      <p className="muted">左からチャンネルを選んでください。既定は general。履歴は REST、配信は別 WS（Yjs とは混ぜていません）。</p>
+      <p className="muted">左からチャンネルを選んでください。既定は general。履歴は REST、配信は別 WS（Yjs とは混ぜていません）。チャンネルやメッセージは監査のため削除しません。</p>
     </ChatShell>
   );
 }

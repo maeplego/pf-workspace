@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 import { type WorkspaceSession, requireWorkspaceSession } from "../lib/session";
 
@@ -10,7 +11,11 @@ function authHeaders(session: WorkspaceSession): Record<string, string> {
   if (session.accessToken) {
     return { Authorization: `Bearer ${session.accessToken}` };
   }
-  return { "X-Dev-User-Sub": session.sub };
+  const headers: Record<string, string> = { "X-Dev-User-Sub": session.sub };
+  if (session.email) {
+    headers["X-Dev-User-Email"] = session.email;
+  }
+  return headers;
 }
 
 async function apiFetch(path: string, session: WorkspaceSession, init?: RequestInit) {
@@ -50,7 +55,8 @@ export async function createWorkspace(formData: FormData, devUser?: string) {
 
 export async function createBoard(workspaceId: string, formData: FormData, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
-  const name = String(formData.get("name") || "").trim() || "Main board";
+	const name = String(formData.get("name") || "").trim();
+  if (!name) return "ボード名を入力してください";
   const data = await apiFetch(`/v1/workspaces/${workspaceId}/boards`, session, {
     method: "POST",
     body: JSON.stringify({ name }),
@@ -147,6 +153,16 @@ export async function updateDocumentTitle(workspaceId: string, documentId: strin
   revalidatePath(`/docs/${workspaceId}/${documentId}`);
 }
 
+export async function syncMemberDisplayName(workspaceId: string, displayName: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  const name = displayName.trim();
+  if (!name) return;
+  await apiFetch(`/v1/workspaces/${workspaceId}/members/me`, session, {
+    method: "PUT",
+    body: JSON.stringify({ displayName: name }),
+  });
+}
+
 export async function addMember(workspaceId: string, formData: FormData, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
   const sub = String(formData.get("sub") || "").trim();
@@ -159,6 +175,44 @@ export async function addMember(workspaceId: string, formData: FormData, devUser
   revalidatePath("/");
 }
 
+export async function createInvitation(workspaceId: string, formData: FormData, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  const role = String(formData.get("role") || "member");
+  const invitedEmail = String(formData.get("invitedEmail") || "").trim();
+  const maxUsesRaw = Number(String(formData.get("maxUses") || "1"));
+  const ttlHoursRaw = Number(String(formData.get("ttlHours") || "72"));
+  const data = (await apiFetch(`/v1/workspaces/${workspaceId}/invitations`, session, {
+    method: "POST",
+    body: JSON.stringify({
+      role,
+      invitedEmail: invitedEmail || undefined,
+      maxUses: Number.isFinite(maxUsesRaw) ? maxUsesRaw : 1,
+      ttlHours: Number.isFinite(ttlHoursRaw) ? ttlHoursRaw : 72,
+    }),
+  })) as { token: string };
+  revalidatePath("/");
+  return data.token;
+}
+
+export async function previewInvitation(token: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  return apiFetch(`/v1/invitations/${encodeURIComponent(token)}`, session) as Promise<{
+    workspace: { id: string; name: string };
+    invitation: { id: string; role: string; maxUses: number; useCount: number; expiresAt: string; invitedEmail?: string };
+  }>;
+}
+
+export async function acceptInvitation(token: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  return apiFetch(`/v1/invitations/${encodeURIComponent(token)}/accept`, session, {
+    method: "POST",
+    body: "{}",
+  }) as Promise<{
+    member: { workspaceId: string; sub: string; role: string; joinedAt: string };
+    workspace: { id: string; name: string };
+  }>;
+}
+
 export async function createChannel(workspaceId: string, formData: FormData, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
   const name = String(formData.get("name") || "").trim();
@@ -169,6 +223,44 @@ export async function createChannel(workspaceId: string, formData: FormData, dev
   });
   revalidatePath(`/chat/${workspaceId}`);
   return ch.id as string;
+}
+
+export async function archiveBoard(boardId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/boards/${boardId}/archive`, session, { method: "POST", body: "{}" });
+  revalidatePath("/");
+}
+
+export async function unarchiveBoard(boardId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/boards/${boardId}/unarchive`, session, { method: "POST", body: "{}" });
+  revalidatePath("/");
+}
+
+export async function archivePage(workspaceId: string, pageId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/pages/${pageId}/archive`, session, { method: "POST", body: "{}" });
+  revalidatePath(`/wiki/${workspaceId}`);
+  redirect(devUser ? `/wiki/${workspaceId}?user=${encodeURIComponent(devUser)}` : `/wiki/${workspaceId}`);
+}
+
+export async function unarchivePage(workspaceId: string, pageId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/pages/${pageId}/unarchive`, session, { method: "POST", body: "{}" });
+  revalidatePath(`/wiki/${workspaceId}`);
+}
+
+export async function trashDocument(workspaceId: string, documentId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/documents/${documentId}/trash`, session, { method: "POST", body: "{}" });
+  revalidatePath(`/docs/${workspaceId}`);
+  redirect(devUser ? `/docs/${workspaceId}?user=${encodeURIComponent(devUser)}` : `/docs/${workspaceId}`);
+}
+
+export async function untrashDocument(workspaceId: string, documentId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/documents/${documentId}/untrash`, session, { method: "POST", body: "{}" });
+  revalidatePath(`/docs/${workspaceId}`);
 }
 
 export async function postMessage(channelId: string, body: string, attachmentFileId?: string, devUser?: string) {

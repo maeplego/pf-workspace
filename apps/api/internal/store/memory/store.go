@@ -2,6 +2,7 @@ package memory
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,21 +14,23 @@ import (
 var _ store.Store = (*Store)(nil)
 
 type Store struct {
-	mu          sync.RWMutex
-	workspaces  map[string]domain.Workspace
-	members     map[string]map[string]domain.Member // workspaceID -> sub -> member
-	boards      map[string]domain.Board
-	columns     map[string]domain.Column
-	cards       map[string]domain.Card
-	boardCols   map[string][]string // boardID -> column IDs ordered
-	columnCards map[string][]string // columnID -> card IDs ordered
-	pages       map[string]domain.Page
-	documents   map[string]domain.Document
-	tickets     map[string]domain.CollabTicket
-	collabIndex map[string]collabRef
-	channels    map[string]domain.Channel
-	messages    map[string][]domain.ChatMessage // channelID -> ordered
-	chatTickets map[string]domain.ChatTicket
+	mu           sync.RWMutex
+	workspaces   map[string]domain.Workspace
+	members      map[string]map[string]domain.Member // workspaceID -> sub -> member
+	invitations  map[string]domain.Invitation
+	audits       map[string][]domain.AuditEvent
+	boards       map[string]domain.Board
+	columns      map[string]domain.Column
+	cards        map[string]domain.Card
+	boardCols    map[string][]string // boardID -> column IDs ordered
+	columnCards  map[string][]string // columnID -> card IDs ordered
+	pages        map[string]domain.Page
+	documents    map[string]domain.Document
+	tickets      map[string]domain.CollabTicket
+	collabIndex  map[string]collabRef
+	channels     map[string]domain.Channel
+	messages     map[string][]domain.ChatMessage // channelID -> ordered
+	chatTickets  map[string]domain.ChatTicket
 	files        map[string]domain.StoredFile
 	pageFiles    map[string][]string // pageID -> fileIDs
 	sprints      map[string]domain.Sprint
@@ -43,20 +46,22 @@ func (s *Store) Ping() error { return nil }
 
 func New() *Store {
 	return &Store{
-		workspaces:  make(map[string]domain.Workspace),
-		members:     make(map[string]map[string]domain.Member),
-		boards:      make(map[string]domain.Board),
-		columns:     make(map[string]domain.Column),
-		cards:       make(map[string]domain.Card),
-		boardCols:   make(map[string][]string),
-		columnCards: make(map[string][]string),
-		pages:       make(map[string]domain.Page),
-		documents:   make(map[string]domain.Document),
-		tickets:     make(map[string]domain.CollabTicket),
-		collabIndex: make(map[string]collabRef),
-		channels:    make(map[string]domain.Channel),
-		messages:    make(map[string][]domain.ChatMessage),
-		chatTickets: make(map[string]domain.ChatTicket),
+		workspaces:   make(map[string]domain.Workspace),
+		members:      make(map[string]map[string]domain.Member),
+		invitations:  make(map[string]domain.Invitation),
+		audits:       make(map[string][]domain.AuditEvent),
+		boards:       make(map[string]domain.Board),
+		columns:      make(map[string]domain.Column),
+		cards:        make(map[string]domain.Card),
+		boardCols:    make(map[string][]string),
+		columnCards:  make(map[string][]string),
+		pages:        make(map[string]domain.Page),
+		documents:    make(map[string]domain.Document),
+		tickets:      make(map[string]domain.CollabTicket),
+		collabIndex:  make(map[string]collabRef),
+		channels:     make(map[string]domain.Channel),
+		messages:     make(map[string][]domain.ChatMessage),
+		chatTickets:  make(map[string]domain.ChatTicket),
 		files:        make(map[string]domain.StoredFile),
 		pageFiles:    make(map[string][]string),
 		sprints:      make(map[string]domain.Sprint),
@@ -64,12 +69,13 @@ func New() *Store {
 	}
 }
 
-func (s *Store) CreateWorkspace(name, ownerSub string, now time.Time) (domain.Workspace, error) {
+func (s *Store) CreateWorkspace(name, ownerSub, orgID string, now time.Time) (domain.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ws := domain.Workspace{
 		ID:        id.New(),
 		Name:      name,
+		OrgID:     orgID,
 		CreatedAt: now,
 	}
 	s.workspaces[ws.ID] = ws
@@ -79,6 +85,7 @@ func (s *Store) CreateWorkspace(name, ownerSub string, now time.Time) (domain.Wo
 	s.members[ws.ID][ownerSub] = domain.Member{
 		WorkspaceID: ws.ID,
 		Sub:         ownerSub,
+		DisplayName: domain.DevDisplayName(ownerSub),
 		Role:        domain.RoleOwner,
 		JoinedAt:    now,
 	}
@@ -139,6 +146,20 @@ func (s *Store) ListMembers(wsID string) ([]domain.Member, error) {
 	return out, nil
 }
 
+func (s *Store) GetMember(wsID, sub string) (domain.Member, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	members, ok := s.members[wsID]
+	if !ok {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	m, ok := members[sub]
+	if !ok {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	return m, nil
+}
+
 func (s *Store) AddMember(wsID, sub string, role domain.Role, now time.Time) (domain.Member, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -149,7 +170,127 @@ func (s *Store) AddMember(wsID, sub string, role domain.Role, now time.Time) (do
 	if _, exists := members[sub]; exists {
 		return domain.Member{}, domain.ErrConflict
 	}
-	m := domain.Member{WorkspaceID: wsID, Sub: sub, Role: role, JoinedAt: now}
+	m := domain.Member{
+		WorkspaceID: wsID,
+		Sub:         sub,
+		DisplayName: domain.DevDisplayName(sub),
+		Role:        role,
+		JoinedAt:    now,
+	}
+	members[sub] = m
+	return m, nil
+}
+
+func (s *Store) CreateInvitation(wsID, tokenHash string, role domain.Role, invitedEmail string, maxUses int, expiresAt time.Time, invitedBy string, now time.Time) (domain.Invitation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return domain.Invitation{}, domain.ErrNotFound
+	}
+	inv := domain.Invitation{
+		ID:           id.New(),
+		WorkspaceID:  wsID,
+		TokenHash:    tokenHash,
+		Role:         role,
+		InvitedEmail: invitedEmail,
+		MaxUses:      maxUses,
+		UseCount:     0,
+		ExpiresAt:    expiresAt,
+		InvitedBy:    invitedBy,
+		CreatedAt:    now,
+	}
+	s.invitations[inv.ID] = inv
+	return inv, nil
+}
+
+func (s *Store) ListInvitations(wsID string) ([]domain.Invitation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.workspaces[wsID]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	out := make([]domain.Invitation, 0)
+	for _, inv := range s.invitations {
+		if inv.WorkspaceID == wsID {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *Store) GetInvitationByTokenHash(tokenHash string) (domain.Invitation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, inv := range s.invitations {
+		if inv.TokenHash == tokenHash {
+			return inv, nil
+		}
+	}
+	return domain.Invitation{}, domain.ErrNotFound
+}
+
+func (s *Store) AcceptInvitation(inviteID, sub string, now time.Time) (domain.Invitation, domain.Member, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inv, ok := s.invitations[inviteID]
+	if !ok {
+		return domain.Invitation{}, domain.Member{}, false, domain.ErrNotFound
+	}
+	if inv.RevokedAt != nil || !now.Before(inv.ExpiresAt) || inv.UseCount >= inv.MaxUses {
+		return domain.Invitation{}, domain.Member{}, false, domain.ErrForbidden
+	}
+	members, ok := s.members[inv.WorkspaceID]
+	if !ok {
+		return domain.Invitation{}, domain.Member{}, false, domain.ErrNotFound
+	}
+	if existing, exists := members[sub]; exists {
+		return inv, existing, false, nil
+	}
+	member := domain.Member{
+		WorkspaceID: inv.WorkspaceID,
+		Sub:         sub,
+		DisplayName: domain.DevDisplayName(sub),
+		Role:        inv.Role,
+		JoinedAt:    now,
+	}
+	members[sub] = member
+	inv.UseCount++
+	s.invitations[inv.ID] = inv
+	return inv, member, true, nil
+}
+
+func (s *Store) AddAuditEvent(event domain.AuditEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audits[event.WorkspaceID] = append(s.audits[event.WorkspaceID], event)
+	return nil
+}
+
+func (s *Store) ListAuditEvents(wsID string) ([]domain.AuditEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := append([]domain.AuditEvent(nil), s.audits[wsID]...)
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *Store) UpdateMemberDisplayName(wsID, sub, displayName string) (domain.Member, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		return domain.Member{}, domain.ErrInvalid
+	}
+	members, ok := s.members[wsID]
+	if !ok {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	m, ok := members[sub]
+	if !ok {
+		return domain.Member{}, domain.ErrNotFound
+	}
+	m.DisplayName = displayName
 	members[sub] = m
 	return m, nil
 }
@@ -185,6 +326,31 @@ func (s *Store) CreateBoard(wsID, name string, now time.Time) (domain.Board, []d
 	}
 	s.boardCols[board.ID] = colIDs
 	return board, cols, nil
+}
+
+func (s *Store) ArchiveBoard(boardID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.boards[boardID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	t := now
+	b.ArchivedAt = &t
+	s.boards[boardID] = b
+	return nil
+}
+
+func (s *Store) UnarchiveBoard(boardID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.boards[boardID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	b.ArchivedAt = nil
+	s.boards[boardID] = b
+	return nil
 }
 
 func (s *Store) ListBoards(wsID string) ([]domain.Board, error) {
@@ -432,6 +598,48 @@ func (s *Store) CreatePage(wsID, parentID, title, body, status string, now time.
 	return page, nil
 }
 
+func (s *Store) ArchivePage(pageID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.pages[pageID]; !ok {
+		return domain.ErrNotFound
+	}
+	ids := append(s.descendantPageIDsLocked(pageID), pageID)
+	t := now
+	for _, id := range ids {
+		p := s.pages[id]
+		p.ArchivedAt = &t
+		s.pages[id] = p
+	}
+	return nil
+}
+
+func (s *Store) UnarchivePage(pageID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.pages[pageID]; !ok {
+		return domain.ErrNotFound
+	}
+	ids := append(s.descendantPageIDsLocked(pageID), pageID)
+	for _, id := range ids {
+		p := s.pages[id]
+		p.ArchivedAt = nil
+		s.pages[id] = p
+	}
+	return nil
+}
+
+func (s *Store) descendantPageIDsLocked(parentID string) []string {
+	var out []string
+	for id, p := range s.pages {
+		if p.ParentID == parentID {
+			out = append(out, id)
+			out = append(out, s.descendantPageIDsLocked(id)...)
+		}
+	}
+	return out
+}
+
 func (s *Store) GetPage(pageID string) (domain.Page, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -595,6 +803,31 @@ func (s *Store) UpdateDocumentTitle(docID, title string, now time.Time) (domain.
 	return d, nil
 }
 
+func (s *Store) TrashDocument(docID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.documents[docID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	t := now
+	d.DeletedAt = &t
+	s.documents[docID] = d
+	return nil
+}
+
+func (s *Store) RestoreDocument(docID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.documents[docID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	d.DeletedAt = nil
+	s.documents[docID] = d
+	return nil
+}
+
 func (s *Store) LookupCollab(collabDocumentID string) (kind, id string, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -629,7 +862,7 @@ func (s *Store) GetTicket(ticketID string) (domain.CollabTicket, error) {
 	return t, nil
 }
 
-func (s *Store) ApplyCollabSnapshot(collabDocumentID, plaintext string, now time.Time) error {
+func (s *Store) ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ref, ok := s.collabIndex[collabDocumentID]
@@ -652,6 +885,7 @@ func (s *Store) ApplyCollabSnapshot(collabDocumentID, plaintext string, now time
 		}
 		d.Body = plaintext
 		d.UpdatedAt = now
+		d.LastEditorSub = editorSub
 		s.documents[ref.id] = d
 	default:
 		return domain.ErrNotFound
@@ -948,7 +1182,7 @@ func (s *Store) ListCardsOnBoard(boardID string) ([]domain.Card, error) {
 	return out, nil
 }
 
-func (s *Store) AppendPageVersionIfChanged(pageID, title, body, sub string, now time.Time) (domain.PageVersion, bool, error) {
+func (s *Store) AppendPageVersionIfChanged(pageID, title, body, status, sub string, now time.Time) (domain.PageVersion, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.pages[pageID]; !ok {
@@ -957,7 +1191,7 @@ func (s *Store) AppendPageVersionIfChanged(pageID, title, body, sub string, now 
 	vers := s.pageVersions[pageID]
 	if len(vers) > 0 {
 		last := vers[len(vers)-1]
-		if last.Title == title && last.Body == body {
+		if last.Title == title && last.Body == body && last.Status == status {
 			return last, false, nil
 		}
 	}
@@ -965,6 +1199,7 @@ func (s *Store) AppendPageVersionIfChanged(pageID, title, body, sub string, now 
 		PageID:    pageID,
 		Number:    len(vers) + 1,
 		Title:     title,
+		Status:    status,
 		Body:      body,
 		Sub:       sub,
 		CreatedAt: now,

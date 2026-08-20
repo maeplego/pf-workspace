@@ -27,6 +27,10 @@ func testServer(t *testing.T) *httptest.Server {
 }
 
 func authReq(t *testing.T, method, url string, body any, sub string) *http.Request {
+	return authReqDev(t, method, url, body, sub, "")
+}
+
+func authReqDev(t *testing.T, method, url string, body any, sub, email string) *http.Request {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
@@ -39,6 +43,9 @@ func authReq(t *testing.T, method, url string, body any, sub string) *http.Reque
 		t.Fatal(err)
 	}
 	req.Header.Set("X-Dev-User-Sub", sub)
+	if email != "" {
+		req.Header.Set("X-Dev-User-Email", email)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }
@@ -1449,4 +1456,371 @@ func TestSprintBurndownAndWikiHistory(t *testing.T) {
 		t.Fatalf("draft history %d", res.StatusCode)
 	}
 	_ = res.Body.Close()
+}
+
+func TestEmptyBoardNameRejected(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "EmptyBoard"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/boards", map[string]string{"name": ""}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty board name: %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+}
+
+func TestInvitationJoinFlow(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Invite WS"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/invitations", map[string]any{
+		"role": "guest", "maxUses": 1, "ttlHours": 24,
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create invite %d", res.StatusCode)
+	}
+	var created struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if created.Token == "" {
+		t.Fatal("empty token")
+	}
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/invitations/"+created.Token, nil, "new-user-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("preview %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/invitations/"+created.Token+"/accept", map[string]string{}, "new-user-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("accept %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/members", nil, "new-user-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("member list %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/invitations/"+created.Token+"/accept", map[string]string{}, "other-user"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("second accept should fail %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/audit-events", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("audit list %d", res.StatusCode)
+	}
+	var audits struct {
+		Events []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&audits); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if len(audits.Events) < 2 {
+		t.Fatalf("expected invitation audit events, got %+v", audits.Events)
+	}
+}
+
+func TestInvitationEmailBinding(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReqDev(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Email WS"}, "owner-1", "owner@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/invitations", map[string]any{
+		"role": "member", "maxUses": 1, "ttlHours": 24, "invitedEmail": "guest@example.com",
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create invite %d", res.StatusCode)
+	}
+	var created struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReqDev(t, http.MethodPost, ts.URL+"/v1/invitations/"+created.Token+"/accept", map[string]string{}, "wrong-user", "other@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("wrong email accept should be forbidden, got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReqDev(t, http.MethodPost, ts.URL+"/v1/invitations/"+created.Token+"/accept", map[string]string{}, "guest-user", "guest@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("matching email accept %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+}
+
+func TestWorkspaceOrgIDFromAuth(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	var buf bytes.Buffer
+	_ = json.NewEncoder(&buf).Encode(map[string]string{"name": "Org WS"})
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/workspaces", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Dev-User-Sub", "owner-1")
+	req.Header.Set("X-Dev-User-Org", "org-demo-1")
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create workspace %d", res.StatusCode)
+	}
+	var ws struct {
+		OrgID string `json:"orgId"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if ws.OrgID != "org-demo-1" {
+		t.Fatalf("orgId = %q", ws.OrgID)
+	}
+}
+
+func TestArchiveTrashAndChannelKept(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Keep"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/boards", map[string]string{"name": "Alpha board"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var board struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&board); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/boards/"+board.ID+"/archive", map[string]string{}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("archive board %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/boards", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed struct {
+		Boards []struct {
+			ID string `json:"id"`
+		}
+		ArchivedBoards []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+	}
+	if err := json.NewDecoder(res.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if len(listed.Boards) != 0 || len(listed.ArchivedBoards) != 1 || listed.ArchivedBoards[0].ID != board.ID {
+		t.Fatalf("archived list %+v", listed)
+	}
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/boards/"+board.ID+"/unarchive", map[string]string{}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("unarchive %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/documents", map[string]string{"title": "Doc A"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/documents/"+doc.ID+"/trash", map[string]string{}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("trash %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/documents", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docs struct {
+		Documents []struct {
+			ID string `json:"id"`
+		}
+		Trashed []struct {
+			ID string `json:"id"`
+		}
+	}
+	if err := json.NewDecoder(res.Body).Decode(&docs); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if len(docs.Documents) != 0 || len(docs.Trashed) != 1 {
+		t.Fatalf("trash list %+v", docs)
+	}
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/documents/"+doc.ID+"/untrash", map[string]string{}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("untrash %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/channels", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chs struct {
+		Channels []struct {
+			ID string `json:"id"`
+		}
+	}
+	if err := json.NewDecoder(res.Body).Decode(&chs); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if len(chs.Channels) == 0 {
+		t.Fatal("expected default channel")
+	}
+	res, err = client.Do(authReq(t, http.MethodDelete, ts.URL+"/v1/channels/"+chs.Channels[0].ID, nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode == http.StatusNoContent {
+		t.Fatal("chat channel must not be hard-deleted")
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/search?q="+url.QueryEscape("Alpha board"), nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hits struct {
+		Hits []struct {
+			Type    string `json:"type"`
+			Title   string `json:"title"`
+			Context string `json:"context"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&hits); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	found := false
+	for _, h := range hits.Hits {
+		if h.Type == "board" && strings.Contains(h.Title, "Alpha") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("board name search %+v", hits.Hits)
+	}
 }

@@ -78,6 +78,7 @@ func (v PageVersion) Info() PageVersionInfo {
 		PageID:    v.PageID,
 		Number:    v.Number,
 		Title:     v.Title,
+		Status:    v.Status,
 		Sub:       v.Sub,
 		CreatedAt: v.CreatedAt,
 	}

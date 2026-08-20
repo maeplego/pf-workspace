@@ -100,6 +100,24 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/sprints/"):
 		sprintID := strings.TrimPrefix(r.URL.Path, "/v1/sprints/")
 		s.deleteSprint(w, u.Sub, sprintID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/boards/") && strings.HasSuffix(r.URL.Path, "/archive"):
+		boardID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/boards/"), "/archive")
+		s.archiveBoard(w, u.Sub, boardID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/boards/") && strings.HasSuffix(r.URL.Path, "/unarchive"):
+		boardID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/boards/"), "/unarchive")
+		s.unarchiveBoard(w, u.Sub, boardID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.HasSuffix(r.URL.Path, "/archive"):
+		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/archive")
+		s.archivePage(w, u.Sub, pageID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.HasSuffix(r.URL.Path, "/unarchive"):
+		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/unarchive")
+		s.unarchivePage(w, u.Sub, pageID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/documents/") && strings.HasSuffix(r.URL.Path, "/trash"):
+		docID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/documents/"), "/trash")
+		s.trashDocument(w, u.Sub, docID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/documents/") && strings.HasSuffix(r.URL.Path, "/untrash"):
+		docID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/documents/"), "/untrash")
+		s.untrashDocument(w, u.Sub, docID)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/pages/") && strings.Contains(r.URL.Path, "/versions/"):
 		rest := strings.TrimPrefix(r.URL.Path, "/v1/pages/")
 		pageID, num, ok := strings.Cut(rest, "/versions/")
@@ -135,7 +153,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		pageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/pages/"), "/attachments")
 		s.listPageAttachments(w, u.Sub, pageID)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/workspaces":
-		s.createWorkspace(w, r, u.Sub)
+		s.createWorkspace(w, r, u)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces":
 		s.listWorkspaces(w, u.Sub)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/chat-tickets":
@@ -166,9 +184,34 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/documents"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/documents")
 		s.listDocuments(w, u.Sub, wsID)
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/members/me"):
+		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/members/me")
+		s.syncMemberDisplayName(w, r, u.Sub, wsID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/members/"):
+		rest := strings.TrimPrefix(r.URL.Path, "/v1/workspaces/")
+		parts := strings.Split(rest, "/")
+		if len(parts) == 3 && parts[1] == "members" && parts[2] != "" {
+			s.getMember(w, u.Sub, parts[0], parts[2])
+			return
+		}
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/members"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/members")
 		s.listMembers(w, u.Sub, wsID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/audit-events"):
+		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/audit-events")
+		s.listAuditEvents(w, u.Sub, wsID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/invitations"):
+		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/invitations")
+		s.listInvitations(w, u.Sub, wsID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/invitations"):
+		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/invitations")
+		s.createInvitation(w, r, u, wsID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/invitations/"):
+		token := strings.TrimPrefix(r.URL.Path, "/v1/invitations/")
+		s.previewInvitation(w, u.Sub, token)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/invitations/") && strings.HasSuffix(r.URL.Path, "/accept"):
+		token := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/invitations/"), "/accept")
+		s.acceptInvitation(w, u, token)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/members"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/members")
 		s.addMember(w, r, u.Sub, wsID)
@@ -249,7 +292,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, sub string) {
+func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var body struct {
 		Name string `json:"name"`
 	}
@@ -257,7 +300,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, sub str
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
 		return
 	}
-	ws, err := s.svc.CreateWorkspace(sub, strings.TrimSpace(body.Name))
+	ws, err := s.svc.CreateWorkspace(u.Sub, strings.TrimSpace(body.Name), u.OrgID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -287,6 +330,31 @@ func (s *Server) listMembers(w http.ResponseWriter, sub, wsID string) {
 	writeJSON(w, http.StatusOK, map[string]any{"members": members})
 }
 
+func (s *Server) getMember(w http.ResponseWriter, sub, wsID, memberSub string) {
+	m, err := s.svc.GetMember(sub, wsID, memberSub)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+func (s *Server) syncMemberDisplayName(w http.ResponseWriter, r *http.Request, sub, wsID string) {
+	var body struct {
+		DisplayName string `json:"displayName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
+		return
+	}
+	m, err := s.svc.SyncMemberDisplayName(sub, wsID, body.DisplayName)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
 func (s *Server) addMember(w http.ResponseWriter, r *http.Request, actorSub, wsID string) {
 	var body struct {
 		Sub  string      `json:"sub"`
@@ -302,6 +370,74 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request, actorSub, wsI
 		return
 	}
 	writeJSON(w, http.StatusCreated, m)
+}
+
+func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request, u auth.User, wsID string) {
+	var body struct {
+		Role         domain.Role `json:"role"`
+		MaxUses      int         `json:"maxUses"`
+		TTLHours     int         `json:"ttlHours"`
+		InvitedEmail string      `json:"invitedEmail"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
+		return
+	}
+	inv, token, err := s.svc.CreateInvitation(u.Sub, wsID, body.Role, body.InvitedEmail, body.MaxUses, body.TTLHours)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"invitation": inv,
+		"token":      token,
+	})
+}
+
+func (s *Server) listInvitations(w http.ResponseWriter, actorSub, wsID string) {
+	invitations, err := s.svc.ListInvitations(actorSub, wsID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invitations": invitations})
+}
+
+func (s *Server) previewInvitation(w http.ResponseWriter, sub, token string) {
+	inv, ws, err := s.svc.PreviewInvitation(sub, strings.TrimSpace(token))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"workspace": ws,
+		"invitation": map[string]any{
+			"id":           inv.ID,
+			"role":         inv.Role,
+			"maxUses":      inv.MaxUses,
+			"useCount":     inv.UseCount,
+			"expiresAt":    inv.ExpiresAt,
+			"invitedEmail": inv.InvitedEmail,
+		},
+	})
+}
+
+func (s *Server) acceptInvitation(w http.ResponseWriter, u auth.User, token string) {
+	member, ws, err := s.svc.AcceptInvitation(u.Sub, u.Email, strings.TrimSpace(token))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"member": member, "workspace": ws})
+}
+
+func (s *Server) listAuditEvents(w http.ResponseWriter, actorSub, wsID string) {
+	events, err := s.svc.ListAuditEvents(actorSub, wsID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
 func (s *Server) createBoard(w http.ResponseWriter, r *http.Request, sub, wsID string) {
@@ -323,7 +459,16 @@ func (s *Server) listBoards(w http.ResponseWriter, sub, wsID string) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"boards": boards})
+	live := make([]domain.Board, 0)
+	archived := make([]domain.Board, 0)
+	for _, b := range boards {
+		if b.ArchivedAt == nil {
+			live = append(live, b)
+		} else {
+			archived = append(archived, b)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"boards": live, "archivedBoards": archived})
 }
 
 func (s *Server) getBoard(w http.ResponseWriter, sub, boardID string) {
@@ -333,6 +478,22 @@ func (s *Server) getBoard(w http.ResponseWriter, sub, boardID string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, board)
+}
+
+func (s *Server) archiveBoard(w http.ResponseWriter, sub, boardID string) {
+	if err := s.svc.ArchiveBoard(sub, boardID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) unarchiveBoard(w http.ResponseWriter, sub, boardID string) {
+	if err := s.svc.UnarchiveBoard(sub, boardID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createCard(w http.ResponseWriter, r *http.Request, sub, columnID string) {
@@ -414,7 +575,12 @@ func (s *Server) pageTree(w http.ResponseWriter, sub, wsID string) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tree": tree})
+	archived, err := s.svc.ArchivedPages(sub, wsID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tree": tree, "archived": archived})
 }
 
 func (s *Server) getPage(w http.ResponseWriter, sub, pageID string) {
@@ -448,6 +614,22 @@ func (s *Server) updatePage(w http.ResponseWriter, r *http.Request, sub, pageID 
 		return
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+func (s *Server) archivePage(w http.ResponseWriter, sub, pageID string) {
+	if err := s.svc.ArchivePage(sub, pageID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) unarchivePage(w http.ResponseWriter, sub, pageID string) {
+	if err := s.svc.UnarchivePage(sub, pageID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) moveCard(w http.ResponseWriter, r *http.Request, sub, cardID string) {
@@ -511,7 +693,12 @@ func (s *Server) listDocuments(w http.ResponseWriter, sub, wsID string) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"documents": docs})
+	trashed, err := s.svc.ListTrashedDocuments(sub, wsID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"documents": docs, "trashed": trashed})
 }
 
 func (s *Server) getDocument(w http.ResponseWriter, sub, docID string) {
@@ -537,6 +724,22 @@ func (s *Server) updateDocument(w http.ResponseWriter, r *http.Request, sub, doc
 		return
 	}
 	writeJSON(w, http.StatusOK, doc)
+}
+
+func (s *Server) trashDocument(w http.ResponseWriter, sub, docID string) {
+	if err := s.svc.TrashDocument(sub, docID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) untrashDocument(w http.ResponseWriter, sub, docID string) {
+	if err := s.svc.RestoreDocument(sub, docID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) requireInternal(w http.ResponseWriter, r *http.Request) bool {
@@ -604,12 +807,13 @@ func (s *Server) internalSnapshot(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		CollabDocumentID string `json:"collabDocumentId"`
 		Plaintext        string `json:"plaintext"`
+		EditorSub        string `json:"editorSub"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
 		return
 	}
-	if err := s.svc.ApplyCollabSnapshot(strings.TrimSpace(body.CollabDocumentID), body.Plaintext); err != nil {
+	if err := s.svc.ApplyCollabSnapshot(strings.TrimSpace(body.CollabDocumentID), body.Plaintext, strings.TrimSpace(body.EditorSub)); err != nil {
 		writeErr(w, err)
 		return
 	}
