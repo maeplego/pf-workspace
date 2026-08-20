@@ -194,6 +194,15 @@ export async function createInvitation(workspaceId: string, formData: FormData, 
   return data.token;
 }
 
+export async function revokeInvitation(workspaceId: string, invitationId: string, devUser?: string) {
+  const session = await requireWorkspaceSession(devUser);
+  await apiFetch(`/v1/workspaces/${workspaceId}/invitations/${invitationId}/revoke`, session, {
+    method: "POST",
+    body: "{}",
+  });
+  revalidatePath("/");
+}
+
 export async function previewInvitation(token: string, devUser?: string) {
   const session = await requireWorkspaceSession(devUser);
   return apiFetch(`/v1/invitations/${encodeURIComponent(token)}`, session) as Promise<{

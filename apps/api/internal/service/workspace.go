@@ -208,6 +208,26 @@ func (s *Service) ListInvitations(actorSub, wsID string) ([]domain.Invitation, e
 	return s.store.ListInvitations(wsID)
 }
 
+func (s *Service) RevokeInvitation(actorSub, wsID, inviteID string) (domain.Invitation, error) {
+	if strings.TrimSpace(inviteID) == "" {
+		return domain.Invitation{}, domain.ErrInvalid
+	}
+	if err := s.requireRole(wsID, actorSub, domain.RoleOwner); err != nil {
+		return domain.Invitation{}, err
+	}
+	now := s.now().UTC()
+	inv, revoked, err := s.store.RevokeInvitation(wsID, inviteID, now)
+	if err != nil {
+		return domain.Invitation{}, err
+	}
+	if revoked {
+		_ = s.store.AddAuditEvent(domain.AuditEvent{
+			ID: id.New(), WorkspaceID: wsID, ActorSub: actorSub, Type: "workspace.invitation.revoked", InviteID: inv.ID, CreatedAt: now,
+		})
+	}
+	return inv, nil
+}
+
 func (s *Service) PreviewInvitation(sub, rawToken string) (domain.Invitation, domain.Workspace, error) {
 	if strings.TrimSpace(sub) == "" || strings.TrimSpace(rawToken) == "" {
 		return domain.Invitation{}, domain.Workspace{}, domain.ErrInvalid

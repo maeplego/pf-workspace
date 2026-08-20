@@ -298,6 +298,35 @@ func (s *Store) GetInvitationByTokenHash(tokenHash string) (domain.Invitation, e
 	return inv, nil
 }
 
+func (s *Store) RevokeInvitation(wsID, inviteID string, now time.Time) (domain.Invitation, bool, error) {
+	ctx := context.Background()
+	if err := s.workspaceExists(ctx, wsID); err != nil {
+		return domain.Invitation{}, false, err
+	}
+	var inv domain.Invitation
+	err := s.pool.QueryRow(ctx, `UPDATE invitations SET revoked_at = $3
+		WHERE id = $1 AND workspace_id = $2 AND revoked_at IS NULL
+		RETURNING id, workspace_id, token_hash, role, invited_email, max_uses, use_count, expires_at, invited_by, created_at, revoked_at`,
+		inviteID, wsID, now).
+		Scan(&inv.ID, &inv.WorkspaceID, &inv.TokenHash, &inv.Role, &inv.InvitedEmail, &inv.MaxUses, &inv.UseCount, &inv.ExpiresAt, &inv.InvitedBy, &inv.CreatedAt, &inv.RevokedAt)
+	if err == nil {
+		return inv, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.Invitation{}, false, mapErr(err)
+	}
+	err = s.pool.QueryRow(ctx, `SELECT id, workspace_id, token_hash, role, invited_email, max_uses, use_count, expires_at, invited_by, created_at, revoked_at
+		FROM invitations WHERE id = $1 AND workspace_id = $2`, inviteID, wsID).
+		Scan(&inv.ID, &inv.WorkspaceID, &inv.TokenHash, &inv.Role, &inv.InvitedEmail, &inv.MaxUses, &inv.UseCount, &inv.ExpiresAt, &inv.InvitedBy, &inv.CreatedAt, &inv.RevokedAt)
+	if err != nil {
+		return domain.Invitation{}, false, mapErr(err)
+	}
+	if inv.RevokedAt != nil {
+		return inv, false, nil
+	}
+	return domain.Invitation{}, false, domain.ErrNotFound
+}
+
 func (s *Store) AcceptInvitation(inviteID, sub string, now time.Time) (domain.Invitation, domain.Member, bool, error) {
 	ctx := context.Background()
 	tx, err := s.pool.Begin(ctx)

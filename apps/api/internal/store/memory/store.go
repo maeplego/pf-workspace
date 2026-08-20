@@ -230,6 +230,21 @@ func (s *Store) GetInvitationByTokenHash(tokenHash string) (domain.Invitation, e
 	return domain.Invitation{}, domain.ErrNotFound
 }
 
+func (s *Store) RevokeInvitation(wsID, inviteID string, now time.Time) (domain.Invitation, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inv, ok := s.invitations[inviteID]
+	if !ok || inv.WorkspaceID != wsID {
+		return domain.Invitation{}, false, domain.ErrNotFound
+	}
+	if inv.RevokedAt != nil {
+		return inv, false, nil
+	}
+	inv.RevokedAt = &now
+	s.invitations[inviteID] = inv
+	return inv, true, nil
+}
+
 func (s *Store) AcceptInvitation(inviteID, sub string, now time.Time) (domain.Invitation, domain.Member, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

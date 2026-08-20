@@ -200,6 +200,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/audit-events"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/audit-events")
 		s.listAuditEvents(w, u.Sub, wsID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.Contains(r.URL.Path, "/invitations/") && strings.HasSuffix(r.URL.Path, "/revoke"):
+		rest := strings.TrimPrefix(r.URL.Path, "/v1/workspaces/")
+		rest = strings.TrimSuffix(rest, "/revoke")
+		wsID, inviteID, ok := strings.Cut(rest, "/invitations/")
+		if !ok || wsID == "" || inviteID == "" {
+			http.NotFound(w, r)
+			return
+		}
+		s.revokeInvitation(w, u.Sub, wsID, inviteID)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/") && strings.HasSuffix(r.URL.Path, "/invitations"):
 		wsID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/workspaces/"), "/invitations")
 		s.listInvitations(w, u.Sub, wsID)
@@ -401,6 +410,15 @@ func (s *Server) listInvitations(w http.ResponseWriter, actorSub, wsID string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"invitations": invitations})
+}
+
+func (s *Server) revokeInvitation(w http.ResponseWriter, actorSub, wsID, inviteID string) {
+	inv, err := s.svc.RevokeInvitation(actorSub, wsID, inviteID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, inv)
 }
 
 func (s *Server) previewInvitation(w http.ResponseWriter, sub, token string) {

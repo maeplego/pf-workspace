@@ -1663,6 +1663,92 @@ func TestWorkspaceOrgIDFromAuth(t *testing.T) {
 	}
 }
 
+func TestInvitationRevoke(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "Revoke WS"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/invitations", map[string]any{
+		"role": "member", "maxUses": 1, "ttlHours": 24,
+	}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		Token      string `json:"token"`
+		Invitation struct {
+			ID string `json:"id"`
+		} `json:"invitation"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces/"+ws.ID+"/invitations/"+created.Invitation.ID+"/revoke", map[string]string{}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("revoke %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/invitations/"+created.Token, nil, "new-user-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("preview after revoke should 404, got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/invitations/"+created.Token+"/accept", map[string]string{}, "new-user-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("accept after revoke should 404, got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReq(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID+"/audit-events", nil, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audits struct {
+		Events []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&audits); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	found := false
+	for _, ev := range audits.Events {
+		if ev.Type == "workspace.invitation.revoked" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected workspace.invitation.revoked audit event")
+	}
+}
+
 func TestArchiveTrashAndChannelKept(t *testing.T) {
 	ts := testServer(t)
 	defer ts.Close()

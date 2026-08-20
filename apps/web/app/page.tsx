@@ -2,7 +2,7 @@ import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { apiFetchForPage, createBoard, createInvitation, createWorkspace, syncMemberDisplayName, unarchiveBoard } from "./actions";
+import { apiFetchForPage, createBoard, createInvitation, createWorkspace, revokeInvitation, syncMemberDisplayName, unarchiveBoard } from "./actions";
 import { ambiguousDisplayNames, memberLabel } from "../lib/display";
 import { oidcEnabled } from "../lib/oidc/env";
 import { getWorkspaceSession } from "../lib/session";
@@ -10,6 +10,22 @@ import { getWorkspaceSession } from "../lib/session";
 type Workspace = { id: string; name: string };
 type Board = { id: string; name: string; workspaceId: string };
 type Member = { sub: string; role: string; displayName?: string };
+type Invitation = {
+  id: string;
+  role: string;
+  maxUses: number;
+  useCount: number;
+  expiresAt: string;
+  invitedEmail?: string;
+  revokedAt?: string | null;
+};
+
+function invitationStatus(inv: Invitation): string {
+  if (inv.revokedAt) return "revoked";
+  if (inv.useCount >= inv.maxUses) return "used";
+  if (new Date(inv.expiresAt) <= new Date()) return "expired";
+  return "active";
+}
 
 function homeHref(devUser?: string) {
   return devUser ? `/?user=${encodeURIComponent(devUser)}` : "/";
@@ -35,6 +51,7 @@ export default async function HomePage({
   const boardsByWs: Record<string, Board[]> = {};
   const archivedByWs: Record<string, Board[]> = {};
   const membersByWs: Record<string, Member[]> = {};
+  const invitationsByWs: Record<string, Invitation[]> = {};
   for (const ws of workspaces) {
     try {
       await syncMemberDisplayName(ws.id, displayName, devUser);
@@ -51,6 +68,17 @@ export default async function HomePage({
       members?: Member[] | null;
     };
     membersByWs[ws.id] = mem.members ?? [];
+    const isOwner = (mem.members ?? []).some((m) => m.sub === session!.sub && m.role === "owner");
+    if (isOwner) {
+      try {
+        const invPayload = (await apiFetchForPage(`/v1/workspaces/${ws.id}/invitations`, devUser)) as {
+          invitations?: Invitation[] | null;
+        };
+        invitationsByWs[ws.id] = invPayload.invitations ?? [];
+      } catch {
+        invitationsByWs[ws.id] = [];
+      }
+    }
   }
 
   async function createWorkspaceAction(formData: FormData) {
@@ -74,6 +102,14 @@ export default async function HomePage({
     if (devUser) q.set("user", devUser);
     q.set("createdInvite", token);
     redirect(`/?${q.toString()}`);
+  }
+
+  async function revokeInvitationAction(formData: FormData) {
+    "use server";
+    const wsId = String(formData.get("workspaceId") || "");
+    const invitationId = String(formData.get("invitationId") || "");
+    if (!wsId || !invitationId) return;
+    await revokeInvitation(wsId, invitationId, devUser);
   }
 
   return (
@@ -202,6 +238,33 @@ export default async function HomePage({
                   招待リンク発行
                 </button>
               </form>
+            ) : null}
+            {(invitationsByWs[ws.id] || []).length > 0 ? (
+              <div style={{ marginTop: "0.75rem" }}>
+                <h3 style={{ fontSize: "0.95rem" }}>招待リンク</h3>
+                <ul style={{ paddingLeft: "1.2rem" }}>
+                  {(invitationsByWs[ws.id] || []).map((inv) => {
+                    const status = invitationStatus(inv);
+                    return (
+                      <li key={inv.id} style={{ marginBottom: "0.35rem" }}>
+                        <span>
+                          {inv.role} · {inv.useCount}/{inv.maxUses} · {status}
+                          {inv.invitedEmail ? ` · ${inv.invitedEmail}` : ""}
+                        </span>
+                        {status === "active" ? (
+                          <form action={revokeInvitationAction} className="row" style={{ display: "inline-flex", marginLeft: "0.5rem" }}>
+                            <input type="hidden" name="workspaceId" value={ws.id} />
+                            <input type="hidden" name="invitationId" value={inv.id} />
+                            <button type="submit" className="btn btn-secondary">
+                              取り消し
+                            </button>
+                          </form>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             ) : null}
           </section>
         ))
