@@ -56,34 +56,37 @@ export default async function HomePage({
   }
 
   return (
-    <div className="shell">
-      <header style={{ marginBottom: "1.5rem" }}>
-        <h1 style={{ margin: 0 }}>Workspace</h1>
-        <p className="muted">
-          ユーザー: <strong>{session!.displayName || session!.sub}</strong>
+    <>
+      <section className="hero">
+        <h1 className="page-title">ワークスペース</h1>
+        <p className="page-lead row">
+          <span>
+            ユーザー: <strong>{session!.displayName || session!.sub}</strong>
+          </span>
           {session!.devMode ? (
             <>
-              {" "}
-              · <Link href={homeHref("demo-user-a")}>A</Link> · <Link href={homeHref("demo-user-b")}>B</Link>
-              <span>（開発モード）</span>
+              <Link href={homeHref("demo-user-a")}>A</Link>
+              <Link href={homeHref("demo-user-b")}>B</Link>
+              <span className="pill">開発モード</span>
             </>
           ) : (
-            <>
-              {" "}
-              · <form action="/logout" method="post" style={{ display: "inline" }}>
-                  <button type="submit">ログアウト</button>
-                </form>
-            </>
+            <form action="/logout" method="post">
+              <button type="submit" className="btn btn-secondary">
+                ログアウト
+              </button>
+            </form>
           )}
         </p>
-        {sp.error ? <p style={{ color: "#bf2600" }}>ログインエラー: {sp.error}</p> : null}
-      </header>
+        {sp.error ? <p className="error">ログインエラー: {sp.error}</p> : null}
+      </section>
 
-      <section className="card-surface" style={{ marginBottom: "1.5rem" }}>
+      <section className="card" style={{ marginBottom: "1.5rem" }}>
         <h2 style={{ marginTop: 0 }}>ワークスペースを作成</h2>
-        <form action={createWorkspaceAction} style={{ display: "flex", gap: "0.5rem" }}>
-          <input name="name" placeholder="Team name" required style={{ flex: 1, padding: "0.5rem" }} />
-          <button type="submit">作成</button>
+        <form action={createWorkspaceAction} className="row">
+          <input name="name" placeholder="Team name" required style={{ flex: 1 }} />
+          <button type="submit" className="btn">
+            作成
+          </button>
         </form>
       </section>
 
@@ -91,7 +94,7 @@ export default async function HomePage({
         <p className="muted">ワークスペースがありません。上のフォームから作成してください。</p>
       ) : (
         workspaces.map((ws) => (
-          <section key={ws.id} className="card-surface" style={{ marginBottom: "1rem" }}>
+          <section key={ws.id} className="card" style={{ marginBottom: "1rem" }}>
             <h2 style={{ marginTop: 0 }}>{ws.name}</h2>
             <p>
               <Link href={devUser ? `/wiki/${ws.id}?user=${devUser}` : `/wiki/${ws.id}`}>Wiki</Link>
@@ -102,10 +105,12 @@ export default async function HomePage({
               {" · "}
               <Link href={devUser ? `/search/${ws.id}?user=${devUser}` : `/search/${ws.id}`}>検索</Link>
             </p>
-            <form action={devUser ? `/search/${ws.id}` : `/search/${ws.id}`} method="get" style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+            <form action={devUser ? `/search/${ws.id}` : `/search/${ws.id}`} method="get" className="row" style={{ marginBottom: "0.75rem" }}>
               {devUser ? <input type="hidden" name="user" value={devUser} /> : null}
-              <input name="q" placeholder="横断検索" required style={{ flex: 1, padding: "0.5rem" }} />
-              <button type="submit">検索</button>
+              <input name="q" placeholder="横断検索" required style={{ flex: 1 }} />
+              <button type="submit" className="btn btn-secondary">
+                検索
+              </button>
             </form>
             <ul style={{ paddingLeft: "1.2rem" }}>
               {(boardsByWs[ws.id] || []).map((b) => (
@@ -116,23 +121,27 @@ export default async function HomePage({
                 </li>
               ))}
             </ul>
-            <form action={createBoardAction} style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+            <form action={createBoardAction} className="row" style={{ marginTop: "0.75rem" }}>
               <input type="hidden" name="workspaceId" value={ws.id} />
-              <input name="name" placeholder="Board name" style={{ flex: 1, padding: "0.5rem" }} />
-              <button type="submit">ボード追加</button>
+              <input name="name" placeholder="Board name" style={{ flex: 1 }} />
+              <button type="submit" className="btn btn-secondary">
+                ボード追加
+              </button>
             </form>
-            <form action={addMemberAction} style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+            <form action={addMemberAction} className="row" style={{ marginTop: "0.5rem" }}>
               <input type="hidden" name="workspaceId" value={ws.id} />
-              <input name="sub" placeholder="demo-user-b" style={{ flex: 1, padding: "0.5rem" }} />
-              <select name="role" defaultValue="member">
+              <input name="sub" placeholder="demo-user-b" style={{ flex: 1 }} />
+              <select name="role" defaultValue="member" style={{ width: "auto" }}>
                 <option value="member">member</option>
                 <option value="guest">guest</option>
               </select>
-              <button type="submit">メンバー追加</button>
+              <button type="submit" className="btn btn-secondary">
+                メンバー追加
+              </button>
             </form>
           </section>
         ))
       )}
-    </div>
+    </>
   );
 }
