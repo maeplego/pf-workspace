@@ -36,6 +36,9 @@ func main() {
 		st = memory.New()
 	}
 	svc := service.New(st)
+	if pg, ok := st.(*postgres.Store); ok {
+		svc.ConfigureTenant(pg.WithTenant, pg.Unscoped)
+	}
 	svc.SetFileOpts(service.FileOpts{
 		PublicURL:   cfg.PublicURL,
 		MediaAPIURL: cfg.MediaAPIURL,

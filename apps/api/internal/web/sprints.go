@@ -45,7 +45,7 @@ func (s *Server) createSprint(w http.ResponseWriter, r *http.Request, sub, board
 		writeErr(w, domain.ErrInvalid)
 		return
 	}
-	sp, err := s.svc.CreateSprint(sub, boardID, body.Name, startAt, endAt)
+	sp, err := s.ts(r.Context()).CreateSprint(sub, boardID, body.Name, startAt, endAt)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -53,8 +53,8 @@ func (s *Server) createSprint(w http.ResponseWriter, r *http.Request, sub, board
 	writeJSON(w, http.StatusCreated, sp)
 }
 
-func (s *Server) listSprints(w http.ResponseWriter, sub, boardID string) {
-	list, err := s.svc.ListSprints(sub, boardID)
+func (s *Server) listSprints(w http.ResponseWriter, r *http.Request, sub, boardID string) {
+	list, err := s.ts(r.Context()).ListSprints(sub, boardID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -65,8 +65,8 @@ func (s *Server) listSprints(w http.ResponseWriter, sub, boardID string) {
 	writeJSON(w, http.StatusOK, map[string]any{"sprints": list})
 }
 
-func (s *Server) getSprint(w http.ResponseWriter, sub, sprintID string) {
-	sp, err := s.svc.GetSprint(sub, sprintID)
+func (s *Server) getSprint(w http.ResponseWriter, r *http.Request, sub, sprintID string) {
+	sp, err := s.ts(r.Context()).GetSprint(sub, sprintID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -101,7 +101,7 @@ func (s *Server) updateSprint(w http.ResponseWriter, r *http.Request, sub, sprin
 		}
 		endAt = &t
 	}
-	sp, err := s.svc.UpdateSprint(sub, sprintID, body.Name, startAt, endAt)
+	sp, err := s.ts(r.Context()).UpdateSprint(sub, sprintID, body.Name, startAt, endAt)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -109,16 +109,16 @@ func (s *Server) updateSprint(w http.ResponseWriter, r *http.Request, sub, sprin
 	writeJSON(w, http.StatusOK, sp)
 }
 
-func (s *Server) deleteSprint(w http.ResponseWriter, sub, sprintID string) {
-	if err := s.svc.DeleteSprint(sub, sprintID); err != nil {
+func (s *Server) deleteSprint(w http.ResponseWriter, r *http.Request, sub, sprintID string) {
+	if err := s.ts(r.Context()).DeleteSprint(sub, sprintID); err != nil {
 		writeErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) sprintBurndown(w http.ResponseWriter, sub, sprintID string) {
-	bd, err := s.svc.SprintBurndown(sub, sprintID)
+func (s *Server) sprintBurndown(w http.ResponseWriter, r *http.Request, sub, sprintID string) {
+	bd, err := s.ts(r.Context()).SprintBurndown(sub, sprintID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -126,8 +126,8 @@ func (s *Server) sprintBurndown(w http.ResponseWriter, sub, sprintID string) {
 	writeJSON(w, http.StatusOK, bd)
 }
 
-func (s *Server) listPageVersions(w http.ResponseWriter, sub, pageID string) {
-	list, err := s.svc.ListPageVersions(sub, pageID)
+func (s *Server) listPageVersions(w http.ResponseWriter, r *http.Request, sub, pageID string) {
+	list, err := s.ts(r.Context()).ListPageVersions(sub, pageID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -138,8 +138,8 @@ func (s *Server) listPageVersions(w http.ResponseWriter, sub, pageID string) {
 	writeJSON(w, http.StatusOK, map[string]any{"versions": list})
 }
 
-func (s *Server) getPageVersion(w http.ResponseWriter, sub, pageID string, number int) {
-	v, err := s.svc.GetPageVersion(sub, pageID, number)
+func (s *Server) getPageVersion(w http.ResponseWriter, r *http.Request, sub, pageID string, number int) {
+	v, err := s.ts(r.Context()).GetPageVersion(sub, pageID, number)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -154,7 +154,7 @@ func (s *Server) diffPageVersions(w http.ResponseWriter, r *http.Request, sub, p
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "from and to required"}})
 		return
 	}
-	diff, err := s.svc.DiffPageVersions(sub, pageID, from, to)
+	diff, err := s.ts(r.Context()).DiffPageVersions(sub, pageID, from, to)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -171,7 +171,7 @@ func (s *Server) restorePageVersion(w http.ResponseWriter, r *http.Request, sub,
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
 		return
 	}
-	page, err := s.svc.RestorePageVersion(sub, pageID, body.Number, body.Version)
+	page, err := s.ts(r.Context()).RestorePageVersion(sub, pageID, body.Number, body.Version)
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -27,7 +27,7 @@ func (s *Store) CreatePage(wsID, parentID, title, body, status string, now time.
 		return domain.Page{}, err
 	}
 	var pos int
-	err := s.pool.QueryRow(ctx, `SELECT COALESCE(MAX(position)+1, 0) FROM pages WHERE workspace_id = $1 AND parent_id = $2`, wsID, parentID).Scan(&pos)
+	err := s.db().QueryRow(ctx, `SELECT COALESCE(MAX(position)+1, 0) FROM pages WHERE workspace_id = $1 AND parent_id = $2`, wsID, parentID).Scan(&pos)
 	if err != nil {
 		return domain.Page{}, err
 	}
@@ -35,7 +35,7 @@ func (s *Store) CreatePage(wsID, parentID, title, body, status string, now time.
 		ID: id.New(), WorkspaceID: wsID, ParentID: parentID, Title: title, Body: body, Status: status,
 		Position: pos, Version: 1, CollabDocumentID: id.New(), CreatedAt: now, UpdatedAt: now,
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO pages (id, workspace_id, parent_id, title, body, status, position, version, collab_document_id, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+	_, err = s.db().exec(ctx, `INSERT INTO pages (id, workspace_id, parent_id, title, body, status, position, version, collab_document_id, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		p.ID, p.WorkspaceID, p.ParentID, p.Title, p.Body, p.Status, p.Position, p.Version, p.CollabDocumentID, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return domain.Page{}, err
@@ -44,7 +44,7 @@ func (s *Store) CreatePage(wsID, parentID, title, body, status string, now time.
 }
 
 func (s *Store) GetPage(pageID string) (domain.Page, error) {
-	row := s.pool.QueryRow(context.Background(), "SELECT "+pageCols+" FROM pages WHERE id = $1", pageID)
+	row := s.db().QueryRow(context.Background(), "SELECT "+pageCols+" FROM pages WHERE id = $1", pageID)
 	p, err := scanPage(row.Scan)
 	if err != nil {
 		return domain.Page{}, mapErr(err)
@@ -57,7 +57,7 @@ func (s *Store) ListPages(wsID string) ([]domain.Page, error) {
 	if err := s.workspaceExists(ctx, wsID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, "SELECT "+pageCols+" FROM pages WHERE workspace_id = $1", wsID)
+	rows, err := s.db().Query(ctx, "SELECT "+pageCols+" FROM pages WHERE workspace_id = $1", wsID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (s *Store) ListPages(wsID string) ([]domain.Page, error) {
 
 func (s *Store) PageWorkspaceID(pageID string) (string, error) {
 	var wsID string
-	err := s.pool.QueryRow(context.Background(), "SELECT workspace_id FROM pages WHERE id = $1", pageID).Scan(&wsID)
+	err := s.db().QueryRow(context.Background(), "SELECT workspace_id FROM pages WHERE id = $1", pageID).Scan(&wsID)
 	if err != nil {
 		return "", mapErr(err)
 	}
@@ -84,7 +84,7 @@ func (s *Store) PageWorkspaceID(pageID string) (string, error) {
 
 func (s *Store) UpdatePage(pageID string, title, body, status, parentID *string, version int, now time.Time) (domain.Page, error) {
 	ctx := context.Background()
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db().begin(ctx)
 	if err != nil {
 		return domain.Page{}, err
 	}
@@ -130,7 +130,7 @@ func (s *Store) UpdatePage(pageID string, title, body, status, parentID *string,
 
 func (s *Store) ArchivePage(pageID string, now time.Time) error {
 	ctx := context.Background()
-	cmd, err := s.pool.Exec(ctx, `
+	cmd, err := s.db().exec(ctx, `
 		WITH RECURSIVE tree AS (
 			SELECT id FROM pages WHERE id = $1
 			UNION ALL
@@ -148,7 +148,7 @@ func (s *Store) ArchivePage(pageID string, now time.Time) error {
 
 func (s *Store) UnarchivePage(pageID string) error {
 	ctx := context.Background()
-	cmd, err := s.pool.Exec(ctx, `
+	cmd, err := s.db().exec(ctx, `
 		WITH RECURSIVE tree AS (
 			SELECT id FROM pages WHERE id = $1
 			UNION ALL
@@ -215,7 +215,7 @@ func (s *Store) CreateDocument(wsID, title, body string, now time.Time) (domain.
 		return domain.Document{}, err
 	}
 	d := domain.Document{ID: id.New(), WorkspaceID: wsID, Title: title, Body: body, CollabDocumentID: id.New(), CreatedAt: now, UpdatedAt: now}
-	_, err := s.pool.Exec(ctx, `INSERT INTO documents (id, workspace_id, title, body, collab_document_id, created_at, updated_at)
+	_, err := s.db().exec(ctx, `INSERT INTO documents (id, workspace_id, title, body, collab_document_id, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`, d.ID, d.WorkspaceID, d.Title, d.Body, d.CollabDocumentID, d.CreatedAt, d.UpdatedAt)
 	if err != nil {
 		return domain.Document{}, err
@@ -228,7 +228,7 @@ func (s *Store) ListDocuments(wsID string) ([]domain.Document, error) {
 	if err := s.workspaceExists(ctx, wsID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, workspace_id, title, body, collab_document_id, last_editor_sub, created_at, updated_at, deleted_at
+	rows, err := s.db().Query(ctx, `SELECT id, workspace_id, title, body, collab_document_id, last_editor_sub, created_at, updated_at, deleted_at
 		FROM documents WHERE workspace_id = $1 ORDER BY created_at, id`, wsID)
 	if err != nil {
 		return nil, err
@@ -247,7 +247,7 @@ func (s *Store) ListDocuments(wsID string) ([]domain.Document, error) {
 
 func (s *Store) GetDocument(docID string) (domain.Document, error) {
 	var d domain.Document
-	err := s.pool.QueryRow(context.Background(), `SELECT id, workspace_id, title, body, collab_document_id, last_editor_sub, created_at, updated_at, deleted_at FROM documents WHERE id = $1`, docID).
+	err := s.db().QueryRow(context.Background(), `SELECT id, workspace_id, title, body, collab_document_id, last_editor_sub, created_at, updated_at, deleted_at FROM documents WHERE id = $1`, docID).
 		Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.CollabDocumentID, &d.LastEditorSub, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
 	if err != nil {
 		return domain.Document{}, mapErr(err)
@@ -257,7 +257,7 @@ func (s *Store) GetDocument(docID string) (domain.Document, error) {
 
 func (s *Store) UpdateDocumentTitle(docID, title string, now time.Time) (domain.Document, error) {
 	var d domain.Document
-	err := s.pool.QueryRow(context.Background(), `UPDATE documents SET title=$2, updated_at=$3 WHERE id=$1
+	err := s.db().QueryRow(context.Background(), `UPDATE documents SET title=$2, updated_at=$3 WHERE id=$1
 		RETURNING id, workspace_id, title, body, collab_document_id, last_editor_sub, created_at, updated_at, deleted_at`, docID, title, now).
 		Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.CollabDocumentID, &d.LastEditorSub, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
 	if err != nil {
@@ -268,7 +268,7 @@ func (s *Store) UpdateDocumentTitle(docID, title string, now time.Time) (domain.
 
 func (s *Store) TrashDocument(docID string, now time.Time) error {
 	ctx := context.Background()
-	cmd, err := s.pool.Exec(ctx, "UPDATE documents SET deleted_at = $2 WHERE id = $1 AND deleted_at IS NULL", docID, now)
+	cmd, err := s.db().exec(ctx, "UPDATE documents SET deleted_at = $2 WHERE id = $1 AND deleted_at IS NULL", docID, now)
 	if err != nil {
 		return err
 	}
@@ -280,7 +280,7 @@ func (s *Store) TrashDocument(docID string, now time.Time) error {
 
 func (s *Store) RestoreDocument(docID string) error {
 	ctx := context.Background()
-	cmd, err := s.pool.Exec(ctx, "UPDATE documents SET deleted_at = NULL WHERE id = $1", docID)
+	cmd, err := s.db().exec(ctx, "UPDATE documents SET deleted_at = NULL WHERE id = $1", docID)
 	if err != nil {
 		return err
 	}
@@ -293,7 +293,7 @@ func (s *Store) RestoreDocument(docID string) error {
 func (s *Store) LookupCollab(collabDocumentID string) (kind, id string, err error) {
 	ctx := context.Background()
 	var pageID string
-	err = s.pool.QueryRow(ctx, "SELECT id FROM pages WHERE collab_document_id = $1", collabDocumentID).Scan(&pageID)
+	err = s.db().QueryRow(ctx, "SELECT id FROM pages WHERE collab_document_id = $1", collabDocumentID).Scan(&pageID)
 	if err == nil {
 		return "page", pageID, nil
 	}
@@ -301,7 +301,7 @@ func (s *Store) LookupCollab(collabDocumentID string) (kind, id string, err erro
 		return "", "", err
 	}
 	var docID string
-	err = s.pool.QueryRow(ctx, "SELECT id FROM documents WHERE collab_document_id = $1", collabDocumentID).Scan(&docID)
+	err = s.db().QueryRow(ctx, "SELECT id FROM documents WHERE collab_document_id = $1", collabDocumentID).Scan(&docID)
 	if err != nil {
 		return "", "", mapErr(err)
 	}
@@ -310,14 +310,14 @@ func (s *Store) LookupCollab(collabDocumentID string) (kind, id string, err erro
 
 func (s *Store) CreateTicket(sub, collabDocumentID string, readOnly bool, now time.Time) domain.CollabTicket {
 	t := domain.CollabTicket{ID: id.New(), Sub: sub, CollabDocumentID: collabDocumentID, ReadOnly: readOnly, ExpiresAt: now.Add(domain.CollabTicketTTL)}
-	_, _ = s.pool.Exec(context.Background(), `INSERT INTO collab_tickets (id, sub, collab_document_id, read_only, expires_at) VALUES ($1,$2,$3,$4,$5)`,
+	_, _ = s.db().exec(context.Background(), `INSERT INTO collab_tickets (id, sub, collab_document_id, read_only, expires_at) VALUES ($1,$2,$3,$4,$5)`,
 		t.ID, t.Sub, t.CollabDocumentID, t.ReadOnly, t.ExpiresAt)
 	return t
 }
 
 func (s *Store) GetTicket(ticketID string) (domain.CollabTicket, error) {
 	var t domain.CollabTicket
-	err := s.pool.QueryRow(context.Background(), `SELECT id, sub, collab_document_id, read_only, expires_at FROM collab_tickets WHERE id = $1`, ticketID).
+	err := s.db().QueryRow(context.Background(), `SELECT id, sub, collab_document_id, read_only, expires_at FROM collab_tickets WHERE id = $1`, ticketID).
 		Scan(&t.ID, &t.Sub, &t.CollabDocumentID, &t.ReadOnly, &t.ExpiresAt)
 	if err != nil {
 		return domain.CollabTicket{}, mapErr(err)
@@ -327,14 +327,14 @@ func (s *Store) GetTicket(ticketID string) (domain.CollabTicket, error) {
 
 func (s *Store) ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub string, now time.Time) error {
 	ctx := context.Background()
-	cmd, err := s.pool.Exec(ctx, "UPDATE pages SET body=$2, updated_at=$3 WHERE collab_document_id=$1", collabDocumentID, plaintext, now)
+	cmd, err := s.db().exec(ctx, "UPDATE pages SET body=$2, updated_at=$3 WHERE collab_document_id=$1", collabDocumentID, plaintext, now)
 	if err != nil {
 		return err
 	}
 	if cmd.RowsAffected() == 1 {
 		return nil
 	}
-	cmd, err = s.pool.Exec(ctx, "UPDATE documents SET body=$2, updated_at=$3, last_editor_sub=$4 WHERE collab_document_id=$1", collabDocumentID, plaintext, now, editorSub)
+	cmd, err = s.db().exec(ctx, "UPDATE documents SET body=$2, updated_at=$3, last_editor_sub=$4 WHERE collab_document_id=$1", collabDocumentID, plaintext, now, editorSub)
 	if err != nil {
 		return err
 	}
@@ -350,7 +350,7 @@ func (s *Store) CreateChannel(wsID, name string, now time.Time) (domain.Channel,
 		return domain.Channel{}, err
 	}
 	ch := domain.Channel{ID: id.New(), WorkspaceID: wsID, Name: name, CreatedAt: now}
-	_, err := s.pool.Exec(ctx, "INSERT INTO channels (id, workspace_id, name, created_at) VALUES ($1,$2,$3,$4)", ch.ID, ch.WorkspaceID, ch.Name, ch.CreatedAt)
+	_, err := s.db().exec(ctx, "INSERT INTO channels (id, workspace_id, name, created_at) VALUES ($1,$2,$3,$4)", ch.ID, ch.WorkspaceID, ch.Name, ch.CreatedAt)
 	if err != nil {
 		return domain.Channel{}, err
 	}
@@ -362,7 +362,7 @@ func (s *Store) ListChannels(wsID string) ([]domain.Channel, error) {
 	if err := s.workspaceExists(ctx, wsID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, "SELECT id, workspace_id, name, created_at FROM channels WHERE workspace_id = $1 ORDER BY created_at, id", wsID)
+	rows, err := s.db().Query(ctx, "SELECT id, workspace_id, name, created_at FROM channels WHERE workspace_id = $1 ORDER BY created_at, id", wsID)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +380,7 @@ func (s *Store) ListChannels(wsID string) ([]domain.Channel, error) {
 
 func (s *Store) GetChannel(channelID string) (domain.Channel, error) {
 	var ch domain.Channel
-	err := s.pool.QueryRow(context.Background(), "SELECT id, workspace_id, name, created_at FROM channels WHERE id = $1", channelID).
+	err := s.db().QueryRow(context.Background(), "SELECT id, workspace_id, name, created_at FROM channels WHERE id = $1", channelID).
 		Scan(&ch.ID, &ch.WorkspaceID, &ch.Name, &ch.CreatedAt)
 	if err != nil {
 		return domain.Channel{}, mapErr(err)
@@ -390,7 +390,7 @@ func (s *Store) GetChannel(channelID string) (domain.Channel, error) {
 
 func (s *Store) AppendMessage(channelID, sub, body string, mentions []string, attachmentFileID string, now time.Time) (domain.ChatMessage, error) {
 	ctx := context.Background()
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db().begin(ctx)
 	if err != nil {
 		return domain.ChatMessage{}, err
 	}
@@ -424,10 +424,10 @@ func (s *Store) AppendMessage(channelID, sub, body string, mentions []string, at
 func (s *Store) ListMessages(channelID string, afterSeq int) ([]domain.ChatMessage, error) {
 	ctx := context.Background()
 	var n int
-	if err := s.pool.QueryRow(ctx, "SELECT 1 FROM channels WHERE id = $1", channelID).Scan(&n); err != nil {
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM channels WHERE id = $1", channelID).Scan(&n); err != nil {
 		return nil, mapErr(err)
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, channel_id, sub, body, mentions, attachment_file_id, seq, created_at
+	rows, err := s.db().Query(ctx, `SELECT id, channel_id, sub, body, mentions, attachment_file_id, seq, created_at
 		FROM chat_messages WHERE channel_id = $1 AND seq > $2 ORDER BY seq`, channelID, afterSeq)
 	if err != nil {
 		return nil, err
@@ -449,14 +449,14 @@ func (s *Store) ListMessages(channelID string, afterSeq int) ([]domain.ChatMessa
 
 func (s *Store) CreateChatTicket(sub, channelID string, readOnly bool, now time.Time) domain.ChatTicket {
 	t := domain.ChatTicket{ID: id.New(), Sub: sub, ChannelID: channelID, ReadOnly: readOnly, ExpiresAt: now.Add(domain.CollabTicketTTL)}
-	_, _ = s.pool.Exec(context.Background(), `INSERT INTO chat_tickets (id, sub, channel_id, read_only, expires_at) VALUES ($1,$2,$3,$4,$5)`,
+	_, _ = s.db().exec(context.Background(), `INSERT INTO chat_tickets (id, sub, channel_id, read_only, expires_at) VALUES ($1,$2,$3,$4,$5)`,
 		t.ID, t.Sub, t.ChannelID, t.ReadOnly, t.ExpiresAt)
 	return t
 }
 
 func (s *Store) GetChatTicket(ticketID string) (domain.ChatTicket, error) {
 	var t domain.ChatTicket
-	err := s.pool.QueryRow(context.Background(), `SELECT id, sub, channel_id, read_only, expires_at FROM chat_tickets WHERE id = $1`, ticketID).
+	err := s.db().QueryRow(context.Background(), `SELECT id, sub, channel_id, read_only, expires_at FROM chat_tickets WHERE id = $1`, ticketID).
 		Scan(&t.ID, &t.Sub, &t.ChannelID, &t.ReadOnly, &t.ExpiresAt)
 	if err != nil {
 		return domain.ChatTicket{}, mapErr(err)
@@ -469,7 +469,7 @@ func (s *Store) SaveFile(f domain.StoredFile) error {
 	if err := s.workspaceExists(ctx, f.WorkspaceID); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO stored_files (id, workspace_id, uploader_sub, purpose, provider, content_type, size, name, view_token, path, created_at)
+	_, err := s.db().exec(ctx, `INSERT INTO stored_files (id, workspace_id, uploader_sub, purpose, provider, content_type, size, name, view_token, path, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		f.ID, f.WorkspaceID, f.UploaderSub, f.Purpose, f.Provider, f.ContentType, f.Size, f.Name, f.ViewToken, f.Path, f.CreatedAt)
 	return err
@@ -477,7 +477,7 @@ func (s *Store) SaveFile(f domain.StoredFile) error {
 
 func (s *Store) GetFile(fileID string) (domain.StoredFile, error) {
 	var f domain.StoredFile
-	err := s.pool.QueryRow(context.Background(), `SELECT id, workspace_id, uploader_sub, purpose, provider, content_type, size, name, view_token, path, created_at
+	err := s.db().QueryRow(context.Background(), `SELECT id, workspace_id, uploader_sub, purpose, provider, content_type, size, name, view_token, path, created_at
 		FROM stored_files WHERE id = $1`, fileID).
 		Scan(&f.ID, &f.WorkspaceID, &f.UploaderSub, &f.Purpose, &f.Provider, &f.ContentType, &f.Size, &f.Name, &f.ViewToken, &f.Path, &f.CreatedAt)
 	if err != nil {
@@ -489,23 +489,23 @@ func (s *Store) GetFile(fileID string) (domain.StoredFile, error) {
 func (s *Store) AttachPageFile(pageID, fileID string) error {
 	ctx := context.Background()
 	var n int
-	if err := s.pool.QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
 		return mapErr(err)
 	}
-	if err := s.pool.QueryRow(ctx, "SELECT 1 FROM stored_files WHERE id = $1", fileID).Scan(&n); err != nil {
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM stored_files WHERE id = $1", fileID).Scan(&n); err != nil {
 		return mapErr(err)
 	}
-	_, err := s.pool.Exec(ctx, "INSERT INTO page_files (page_id, file_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", pageID, fileID)
+	_, err := s.db().exec(ctx, "INSERT INTO page_files (page_id, file_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", pageID, fileID)
 	return err
 }
 
 func (s *Store) ListPageFiles(pageID string) ([]domain.StoredFile, error) {
 	ctx := context.Background()
 	var n int
-	if err := s.pool.QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
 		return nil, mapErr(err)
 	}
-	rows, err := s.pool.Query(ctx, `SELECT f.id, f.workspace_id, f.uploader_sub, f.purpose, f.provider, f.content_type, f.size, f.name, f.view_token, f.path, f.created_at
+	rows, err := s.db().Query(ctx, `SELECT f.id, f.workspace_id, f.uploader_sub, f.purpose, f.provider, f.content_type, f.size, f.name, f.view_token, f.path, f.created_at
 		FROM page_files pf JOIN stored_files f ON f.id = pf.file_id WHERE pf.page_id = $1`, pageID)
 	if err != nil {
 		return nil, err
@@ -525,11 +525,11 @@ func (s *Store) ListPageFiles(pageID string) ([]domain.StoredFile, error) {
 func (s *Store) CreateSprint(boardID, name string, startAt, endAt, now time.Time) (domain.Sprint, error) {
 	ctx := context.Background()
 	var wsID string
-	if err := s.pool.QueryRow(ctx, "SELECT workspace_id FROM boards WHERE id = $1", boardID).Scan(&wsID); err != nil {
+	if err := s.db().QueryRow(ctx, "SELECT workspace_id FROM boards WHERE id = $1", boardID).Scan(&wsID); err != nil {
 		return domain.Sprint{}, mapErr(err)
 	}
 	sp := domain.Sprint{ID: id.New(), BoardID: boardID, WorkspaceID: wsID, Name: name, StartAt: startAt.UTC(), EndAt: endAt.UTC(), CreatedAt: now}
-	_, err := s.pool.Exec(ctx, `INSERT INTO sprints (id, board_id, workspace_id, name, start_at, end_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+	_, err := s.db().exec(ctx, `INSERT INTO sprints (id, board_id, workspace_id, name, start_at, end_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 		sp.ID, sp.BoardID, sp.WorkspaceID, sp.Name, sp.StartAt, sp.EndAt, sp.CreatedAt)
 	if err != nil {
 		return domain.Sprint{}, err
@@ -540,10 +540,10 @@ func (s *Store) CreateSprint(boardID, name string, startAt, endAt, now time.Time
 func (s *Store) ListSprints(boardID string) ([]domain.Sprint, error) {
 	ctx := context.Background()
 	var n int
-	if err := s.pool.QueryRow(ctx, "SELECT 1 FROM boards WHERE id = $1", boardID).Scan(&n); err != nil {
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM boards WHERE id = $1", boardID).Scan(&n); err != nil {
 		return nil, mapErr(err)
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, board_id, workspace_id, name, start_at, end_at, created_at FROM sprints WHERE board_id = $1 ORDER BY start_at, id`, boardID)
+	rows, err := s.db().Query(ctx, `SELECT id, board_id, workspace_id, name, start_at, end_at, created_at FROM sprints WHERE board_id = $1 ORDER BY start_at, id`, boardID)
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +561,7 @@ func (s *Store) ListSprints(boardID string) ([]domain.Sprint, error) {
 
 func (s *Store) GetSprint(sprintID string) (domain.Sprint, error) {
 	var sp domain.Sprint
-	err := s.pool.QueryRow(context.Background(), `SELECT id, board_id, workspace_id, name, start_at, end_at, created_at FROM sprints WHERE id = $1`, sprintID).
+	err := s.db().QueryRow(context.Background(), `SELECT id, board_id, workspace_id, name, start_at, end_at, created_at FROM sprints WHERE id = $1`, sprintID).
 		Scan(&sp.ID, &sp.BoardID, &sp.WorkspaceID, &sp.Name, &sp.StartAt, &sp.EndAt, &sp.CreatedAt)
 	if err != nil {
 		return domain.Sprint{}, mapErr(err)
@@ -584,7 +584,7 @@ func (s *Store) UpdateSprint(sprintID, name string, startAt, endAt *time.Time, n
 	if endAt != nil {
 		sp.EndAt = endAt.UTC()
 	}
-	_, err = s.pool.Exec(context.Background(), `UPDATE sprints SET name=$2, start_at=$3, end_at=$4 WHERE id=$1`, sprintID, sp.Name, sp.StartAt, sp.EndAt)
+	_, err = s.db().exec(context.Background(), `UPDATE sprints SET name=$2, start_at=$3, end_at=$4 WHERE id=$1`, sprintID, sp.Name, sp.StartAt, sp.EndAt)
 	if err != nil {
 		return domain.Sprint{}, err
 	}
@@ -593,20 +593,20 @@ func (s *Store) UpdateSprint(sprintID, name string, startAt, endAt *time.Time, n
 
 func (s *Store) DeleteSprint(sprintID string) error {
 	ctx := context.Background()
-	cmd, err := s.pool.Exec(ctx, "DELETE FROM sprints WHERE id = $1", sprintID)
+	cmd, err := s.db().exec(ctx, "DELETE FROM sprints WHERE id = $1", sprintID)
 	if err != nil {
 		return err
 	}
 	if cmd.RowsAffected() != 1 {
 		return domain.ErrNotFound
 	}
-	_, err = s.pool.Exec(ctx, "UPDATE cards SET sprint_id = '' WHERE sprint_id = $1", sprintID)
+	_, err = s.db().exec(ctx, "UPDATE cards SET sprint_id = '' WHERE sprint_id = $1", sprintID)
 	return err
 }
 
 func (s *Store) AppendPageVersionIfChanged(pageID, title, body, status, sub string, now time.Time) (domain.PageVersion, bool, error) {
 	ctx := context.Background()
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db().begin(ctx)
 	if err != nil {
 		return domain.PageVersion{}, false, err
 	}
@@ -651,10 +651,10 @@ func (s *Store) AppendPageVersionIfChanged(pageID, title, body, status, sub stri
 func (s *Store) ListPageVersions(pageID string) ([]domain.PageVersion, error) {
 	ctx := context.Background()
 	var n int
-	if err := s.pool.QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
 		return nil, mapErr(err)
 	}
-	rows, err := s.pool.Query(ctx, `SELECT page_id, number, title, body, status, sub, created_at FROM page_versions WHERE page_id = $1 ORDER BY number`, pageID)
+	rows, err := s.db().Query(ctx, `SELECT page_id, number, title, body, status, sub, created_at FROM page_versions WHERE page_id = $1 ORDER BY number`, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -673,11 +673,11 @@ func (s *Store) ListPageVersions(pageID string) ([]domain.PageVersion, error) {
 func (s *Store) GetPageVersion(pageID string, number int) (domain.PageVersion, error) {
 	ctx := context.Background()
 	var n int
-	if err := s.pool.QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
+	if err := s.db().QueryRow(ctx, "SELECT 1 FROM pages WHERE id = $1", pageID).Scan(&n); err != nil {
 		return domain.PageVersion{}, mapErr(err)
 	}
 	var v domain.PageVersion
-	err := s.pool.QueryRow(ctx, `SELECT page_id, number, title, body, status, sub, created_at FROM page_versions WHERE page_id = $1 AND number = $2`, pageID, number).
+	err := s.db().QueryRow(ctx, `SELECT page_id, number, title, body, status, sub, created_at FROM page_versions WHERE page_id = $1 AND number = $2`, pageID, number).
 		Scan(&v.PageID, &v.Number, &v.Title, &v.Body, &v.Status, &v.Sub, &v.CreatedAt)
 	if err != nil {
 		return domain.PageVersion{}, mapErr(err)

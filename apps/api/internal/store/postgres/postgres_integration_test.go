@@ -83,3 +83,55 @@ func TestPostgresStorePersistsWorkspaceBoardAndMessages(t *testing.T) {
 	}
 	_ = board
 }
+
+func TestPostgresRLSTenantIsolation(t *testing.T) {
+	url := os.Getenv("WORKSPACE_DATABASE_URL")
+	if url == "" {
+		t.Skip("WORKSPACE_DATABASE_URL not set")
+	}
+	store, err := Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	unscoped := store.Unscoped()
+	wsA, err := unscoped.CreateWorkspace("Org A", "owner-rls", "org-a", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsB, err := unscoped.CreateWorkspace("Org B", "owner-rls", "org-b", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orgA := store.WithTenant("org-a")
+	orgB := store.WithTenant("org-b")
+
+	if _, err := orgA.GetWorkspace(wsA.ID); err != nil {
+		t.Fatalf("org-a should read own workspace: %v", err)
+	}
+	if _, err := orgA.GetWorkspace(wsB.ID); err != domain.ErrNotFound {
+		t.Fatalf("org-a must not read org-b workspace, got %v", err)
+	}
+	if _, err := orgB.GetWorkspace(wsB.ID); err != nil {
+		t.Fatalf("org-b should read own workspace: %v", err)
+	}
+	if _, err := orgB.GetWorkspace(wsA.ID); err != domain.ErrNotFound {
+		t.Fatalf("org-b must not read org-a workspace, got %v", err)
+	}
+
+	listA := orgA.ListWorkspacesForSub("owner-rls")
+	for _, w := range listA {
+		if w.ID == wsB.ID {
+			t.Fatal("org-a list must not include org-b workspace")
+		}
+	}
+	listB := orgB.ListWorkspacesForSub("owner-rls")
+	for _, w := range listB {
+		if w.ID == wsA.ID {
+			t.Fatal("org-b list must not include org-a workspace")
+		}
+	}
+}

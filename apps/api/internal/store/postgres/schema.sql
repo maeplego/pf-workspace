@@ -209,3 +209,194 @@ CREATE TABLE IF NOT EXISTS page_versions (
 ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT '';
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_editor_sub TEXT NOT NULL DEFAULT '';
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- Row level security: app.tenant_id (SET LOCAL) mirrors workspaces.org_id from IdP.
+-- When app.tenant_id is unset (NULL), policies allow all rows (migration / Unscoped store).
+
+CREATE OR REPLACE FUNCTION app_tenant_matches(org_id TEXT) RETURNS BOOLEAN AS $$
+  SELECT current_setting('app.tenant_id', true) IS NULL
+      OR org_id = current_setting('app.tenant_id', true);
+$$ LANGUAGE sql STABLE;
+
+CREATE OR REPLACE FUNCTION app_workspace_tenant_matches(ws_id TEXT) RETURNS BOOLEAN AS $$
+  SELECT current_setting('app.tenant_id', true) IS NULL
+      OR EXISTS (
+        SELECT 1 FROM workspaces w
+        WHERE w.id = ws_id AND app_tenant_matches(w.org_id)
+      );
+$$ LANGUAGE sql STABLE;
+
+ALTER TABLE workspaces ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS workspaces_tenant ON workspaces;
+CREATE POLICY workspaces_tenant ON workspaces
+  FOR ALL
+  USING (app_tenant_matches(org_id))
+  WITH CHECK (app_tenant_matches(org_id));
+
+ALTER TABLE members ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS members_tenant ON members;
+CREATE POLICY members_tenant ON members
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS invitations_tenant ON invitations;
+CREATE POLICY invitations_tenant ON invitations
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS audit_events_tenant ON audit_events;
+CREATE POLICY audit_events_tenant ON audit_events
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE boards ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS boards_tenant ON boards;
+CREATE POLICY boards_tenant ON boards
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE columns ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS columns_tenant ON columns;
+CREATE POLICY columns_tenant ON columns
+  FOR ALL
+  USING (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM boards b
+      JOIN workspaces w ON w.id = b.workspace_id
+      WHERE b.id = columns.board_id AND app_tenant_matches(w.org_id)
+    )
+  )
+  WITH CHECK (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM boards b
+      JOIN workspaces w ON w.id = b.workspace_id
+      WHERE b.id = columns.board_id AND app_tenant_matches(w.org_id)
+    )
+  );
+
+ALTER TABLE sprints ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sprints_tenant ON sprints;
+CREATE POLICY sprints_tenant ON sprints
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE cards ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS cards_tenant ON cards;
+CREATE POLICY cards_tenant ON cards
+  FOR ALL
+  USING (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM boards b
+      JOIN workspaces w ON w.id = b.workspace_id
+      WHERE b.id = cards.board_id AND app_tenant_matches(w.org_id)
+    )
+  )
+  WITH CHECK (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM boards b
+      JOIN workspaces w ON w.id = b.workspace_id
+      WHERE b.id = cards.board_id AND app_tenant_matches(w.org_id)
+    )
+  );
+
+ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pages_tenant ON pages;
+CREATE POLICY pages_tenant ON pages
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS documents_tenant ON documents;
+CREATE POLICY documents_tenant ON documents
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE channels ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS channels_tenant ON channels;
+CREATE POLICY channels_tenant ON channels
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS chat_messages_tenant ON chat_messages;
+CREATE POLICY chat_messages_tenant ON chat_messages
+  FOR ALL
+  USING (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM channels c
+      JOIN workspaces w ON w.id = c.workspace_id
+      WHERE c.id = chat_messages.channel_id AND app_tenant_matches(w.org_id)
+    )
+  )
+  WITH CHECK (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM channels c
+      JOIN workspaces w ON w.id = c.workspace_id
+      WHERE c.id = chat_messages.channel_id AND app_tenant_matches(w.org_id)
+    )
+  );
+
+ALTER TABLE stored_files ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS stored_files_tenant ON stored_files;
+CREATE POLICY stored_files_tenant ON stored_files
+  FOR ALL
+  USING (app_workspace_tenant_matches(workspace_id))
+  WITH CHECK (app_workspace_tenant_matches(workspace_id));
+
+ALTER TABLE page_files ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS page_files_tenant ON page_files;
+CREATE POLICY page_files_tenant ON page_files
+  FOR ALL
+  USING (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM pages p
+      JOIN workspaces w ON w.id = p.workspace_id
+      WHERE p.id = page_files.page_id AND app_tenant_matches(w.org_id)
+    )
+  )
+  WITH CHECK (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM pages p
+      JOIN workspaces w ON w.id = p.workspace_id
+      WHERE p.id = page_files.page_id AND app_tenant_matches(w.org_id)
+    )
+  );
+
+ALTER TABLE page_versions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS page_versions_tenant ON page_versions;
+CREATE POLICY page_versions_tenant ON page_versions
+  FOR ALL
+  USING (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM pages p
+      JOIN workspaces w ON w.id = p.workspace_id
+      WHERE p.id = page_versions.page_id AND app_tenant_matches(w.org_id)
+    )
+  )
+  WITH CHECK (
+    current_setting('app.tenant_id', true) IS NULL
+    OR EXISTS (
+      SELECT 1 FROM pages p
+      JOIN workspaces w ON w.id = p.workspace_id
+      WHERE p.id = page_versions.page_id AND app_tenant_matches(w.org_id)
+    )
+  );

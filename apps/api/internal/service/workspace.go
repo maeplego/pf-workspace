@@ -27,12 +27,14 @@ type FileOpts struct {
 }
 
 type Service struct {
-	store     store.Store
-	now       func() time.Time
-	bus       Broadcaster
-	publicURL string
-	mediaURL  string
-	uploadDir string
+	store         store.Store
+	tenantScope   func(orgID string) store.Store
+	unscopedStore func() store.Store
+	now           func() time.Time
+	bus           Broadcaster
+	publicURL     string
+	mediaURL      string
+	uploadDir     string
 }
 
 func New(st store.Store) *Service {
@@ -273,7 +275,8 @@ func (s *Service) PreviewInvitation(sub, rawToken string) (domain.Invitation, do
 	if strings.TrimSpace(sub) == "" || strings.TrimSpace(rawToken) == "" {
 		return domain.Invitation{}, domain.Workspace{}, domain.ErrInvalid
 	}
-	inv, err := s.store.GetInvitationByTokenHash(hashInviteToken(rawToken))
+	st := s.Unscoped()
+	inv, err := st.store.GetInvitationByTokenHash(hashInviteToken(rawToken))
 	if err != nil {
 		return domain.Invitation{}, domain.Workspace{}, domain.ErrNotFound
 	}
@@ -281,7 +284,7 @@ func (s *Service) PreviewInvitation(sub, rawToken string) (domain.Invitation, do
 	if inv.RevokedAt != nil || !now.Before(inv.ExpiresAt) || inv.UseCount >= inv.MaxUses {
 		return domain.Invitation{}, domain.Workspace{}, domain.ErrNotFound
 	}
-	ws, err := s.store.GetWorkspace(inv.WorkspaceID)
+	ws, err := st.store.GetWorkspace(inv.WorkspaceID)
 	if err != nil {
 		return domain.Invitation{}, domain.Workspace{}, domain.ErrNotFound
 	}
@@ -292,15 +295,21 @@ func (s *Service) AcceptInvitation(sub, email, rawToken string) (domain.Member, 
 	if strings.TrimSpace(sub) == "" || strings.TrimSpace(rawToken) == "" {
 		return domain.Member{}, domain.Workspace{}, domain.ErrInvalid
 	}
-	inv, err := s.store.GetInvitationByTokenHash(hashInviteToken(rawToken))
+	st := s.Unscoped()
+	inv, err := st.store.GetInvitationByTokenHash(hashInviteToken(rawToken))
 	if err != nil {
 		return domain.Member{}, domain.Workspace{}, domain.ErrNotFound
 	}
 	if inv.InvitedEmail != "" && normalizeEmail(email) != inv.InvitedEmail {
 		return domain.Member{}, domain.Workspace{}, domain.ErrForbidden
 	}
+	ws, err := st.store.GetWorkspace(inv.WorkspaceID)
+	if err != nil {
+		return domain.Member{}, domain.Workspace{}, domain.ErrNotFound
+	}
+	tenant := s.ForOrg(ws.OrgID)
 	now := s.now().UTC()
-	updated, member, joined, err := s.store.AcceptInvitation(inv.ID, sub, now)
+	updated, member, joined, err := tenant.store.AcceptInvitation(inv.ID, sub, now)
 	if err != nil {
 		if err == domain.ErrForbidden {
 			return domain.Member{}, domain.Workspace{}, domain.ErrNotFound
@@ -308,11 +317,11 @@ func (s *Service) AcceptInvitation(sub, email, rawToken string) (domain.Member, 
 		return domain.Member{}, domain.Workspace{}, err
 	}
 	if joined {
-		_ = s.store.AddAuditEvent(domain.AuditEvent{
+		_ = tenant.store.AddAuditEvent(domain.AuditEvent{
 			ID: id.New(), WorkspaceID: updated.WorkspaceID, ActorSub: sub, TargetSub: sub, Type: "workspace.invitation.accepted", InviteID: updated.ID, CreatedAt: now,
 		})
 	}
-	ws, err := s.store.GetWorkspace(updated.WorkspaceID)
+	ws, err = tenant.store.GetWorkspace(updated.WorkspaceID)
 	if err != nil {
 		return domain.Member{}, domain.Workspace{}, err
 	}
@@ -791,19 +800,20 @@ func (s *Service) CollabPlaintext(collabDocumentID string) (string, error) {
 	if !domain.ValidCollabRoom(collabDocumentID) {
 		return "", domain.ErrInvalid
 	}
-	kind, targetID, err := s.store.LookupCollab(collabDocumentID)
+	st := s.Unscoped().store
+	kind, targetID, err := st.LookupCollab(collabDocumentID)
 	if err != nil {
 		return "", err
 	}
 	switch kind {
 	case "page":
-		p, err := s.store.GetPage(targetID)
+		p, err := st.GetPage(targetID)
 		if err != nil {
 			return "", err
 		}
 		return p.Body, nil
 	case "document":
-		d, err := s.store.GetDocument(targetID)
+		d, err := st.GetDocument(targetID)
 		if err != nil {
 			return "", err
 		}
@@ -820,19 +830,20 @@ func (s *Service) ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub str
 	if len(plaintext) > domain.MaxPageBody {
 		return domain.ErrInvalid
 	}
-	kind, targetID, err := s.store.LookupCollab(collabDocumentID)
+	st := s.Unscoped().store
+	kind, targetID, err := st.LookupCollab(collabDocumentID)
 	if err != nil {
 		return err
 	}
-	if err := s.store.ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub, s.now().UTC()); err != nil {
+	if err := st.ApplyCollabSnapshot(collabDocumentID, plaintext, editorSub, s.now().UTC()); err != nil {
 		return err
 	}
 	if kind == "page" {
-		p, err := s.store.GetPage(targetID)
+		p, err := st.GetPage(targetID)
 		if err != nil {
 			return err
 		}
-		_, _, _ = s.store.AppendPageVersionIfChanged(p.ID, p.Title, p.Body, p.Status, editorSub, s.now().UTC())
+		_, _, _ = st.AppendPageVersionIfChanged(p.ID, p.Title, p.Body, p.Status, editorSub, s.now().UTC())
 	}
 	return nil
 }

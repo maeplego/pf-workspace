@@ -34,7 +34,7 @@ func (s *Server) uploadLocal(w http.ResponseWriter, r *http.Request, sub string)
 	}
 	defer file.Close()
 	contentType := header.Header.Get("Content-Type")
-	view, err := s.svc.SaveLocalFile(sub, wsID, purpose, header.Filename, contentType, header.Size, file)
+	view, err := s.ts(r.Context()).SaveLocalFile(sub, wsID, purpose, header.Filename, contentType, header.Size, file)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -55,7 +55,7 @@ func (s *Server) linkRemote(w http.ResponseWriter, r *http.Request, sub string) 
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
 		return
 	}
-	view, err := s.svc.LinkRemoteFile(sub, strings.TrimSpace(body.WorkspaceID), strings.TrimSpace(body.Purpose), strings.TrimSpace(body.FileID), body.Name, body.ContentType, body.Size)
+	view, err := s.ts(r.Context()).LinkRemoteFile(sub, strings.TrimSpace(body.WorkspaceID), strings.TrimSpace(body.Purpose), strings.TrimSpace(body.FileID), body.Name, body.ContentType, body.Size)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -71,7 +71,7 @@ func (s *Server) attachPage(w http.ResponseWriter, r *http.Request, sub, pageID 
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "invalid json"}})
 		return
 	}
-	view, err := s.svc.AttachPageFile(sub, pageID, strings.TrimSpace(body.FileID))
+	view, err := s.ts(r.Context()).AttachPageFile(sub, pageID, strings.TrimSpace(body.FileID))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -79,8 +79,8 @@ func (s *Server) attachPage(w http.ResponseWriter, r *http.Request, sub, pageID 
 	writeJSON(w, http.StatusCreated, view)
 }
 
-func (s *Server) listPageAttachments(w http.ResponseWriter, sub, pageID string) {
-	files, err := s.svc.ListPageFiles(sub, pageID)
+func (s *Server) listPageAttachments(w http.ResponseWriter, r *http.Request, sub, pageID string) {
+	files, err := s.ts(r.Context()).ListPageFiles(sub, pageID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -88,8 +88,8 @@ func (s *Server) listPageAttachments(w http.ResponseWriter, sub, pageID string) 
 	writeJSON(w, http.StatusOK, map[string]any{"files": files})
 }
 
-func (s *Server) getFileMeta(w http.ResponseWriter, sub, fileID string) {
-	view, err := s.svc.GetFileForMember(sub, fileID)
+func (s *Server) getFileMeta(w http.ResponseWriter, r *http.Request, sub, fileID string) {
+	view, err := s.ts(r.Context()).GetFileForMember(sub, fileID)
 	if err != nil {
 		writeErr(w, err)
 		return

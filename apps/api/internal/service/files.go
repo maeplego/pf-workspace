@@ -199,7 +199,7 @@ func (s *Service) GetFileForMember(sub, fileID string) (FileView, error) {
 }
 
 func (s *Service) OpenFileByToken(fileID, token string) (domain.StoredFile, error) {
-	f, err := s.store.GetFile(fileID)
+	f, err := s.Unscoped().store.GetFile(fileID)
 	if err != nil {
 		return domain.StoredFile{}, err
 	}
