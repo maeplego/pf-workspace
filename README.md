@@ -32,12 +32,17 @@ docker compose up -d --build
 
 Compose は開発用ヘッダ認証です。ブラウザで `/?user=demo-user-a` のようにユーザーを切り替えます。
 
-## デモ
+## デモ（招待本線）
 
-1. ユーザー A でワークスペースを作る
-2. `demo-user-b` をメンバーに追加する
-3. Wiki や Docs を 2 ウィンドウで同時編集する。チャット `#general` で投稿と入力中表示を見る
-4. ホームの検索、または `/search/{workspaceId}?q=` で横断検索する（部分一致。guest には下書き Wiki は出ません）
+メンバー参加の本線は **招待リンク**（`/join/{token}`）です。sub の手入力追加は使いません。
+
+1. ブラウザ A で `/?user=demo-user-a` を開き、ワークスペースを作成する
+2. owner として「招待リンク発行」し、表示された URL（既定 `http://localhost:3006/join/{token}`）をコピーする
+3. ブラウザ B（別プロファイル／シークレット）で `/?user=demo-user-b` のあと、その `/join/{token}` を開いて参加する
+4. Wiki や Docs を 2 ウィンドウで同時編集する。チャット `#general` で投稿と入力中表示を見る
+5. ホームの検索、または `/search/{workspaceId}?q=` で横断検索する（部分一致。guest には下書き Wiki は出ません）
+
+招待リンクの origin は `WORKSPACE_PUBLIC_BASE_URL`（Compose 既定 `http://localhost:3006`）です。
 
 IME の変換中は共同編集に送らず、確定後だけ同期します。
 

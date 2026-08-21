@@ -208,7 +208,7 @@ export default async function HomePage({
           <p className="muted">
             招待リンクを発行しました:{" "}
             <code style={{ userSelect: "all" }}>
-              {`${process.env.WORKSPACE_PUBLIC_BASE_URL || "http://localhost:3005"}/join/${sp.createdInvite}`}
+              {`${process.env.WORKSPACE_PUBLIC_BASE_URL || "http://localhost:3006"}/join/${sp.createdInvite}`}
             </code>
           </p>
         ) : null}
@@ -216,7 +216,7 @@ export default async function HomePage({
           <p className="muted">
             招待リンクを再発行しました:{" "}
             <code style={{ userSelect: "all" }}>
-              {`${process.env.WORKSPACE_PUBLIC_BASE_URL || "http://localhost:3005"}/join/${sp.resentInvite}`}
+              {`${process.env.WORKSPACE_PUBLIC_BASE_URL || "http://localhost:3006"}/join/${sp.resentInvite}`}
             </code>
           </p>
         ) : null}

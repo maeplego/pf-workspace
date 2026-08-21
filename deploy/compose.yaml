@@ -60,6 +60,7 @@ services:
         NEXT_PUBLIC_CHAT_WS_URL: ${NEXT_PUBLIC_CHAT_WS_URL:-ws://localhost:8096/chat/ws}
     environment:
       WORKSPACE_API_URL: ${WORKSPACE_API_URL:-http://workspace-api:8096}
+      WORKSPACE_PUBLIC_BASE_URL: ${WORKSPACE_PUBLIC_BASE_URL:-http://localhost:3006}
       NEXT_PUBLIC_COLLAB_WS_URL: ${NEXT_PUBLIC_COLLAB_WS_URL:-ws://localhost:8097}
       NEXT_PUBLIC_CHAT_WS_URL: ${NEXT_PUBLIC_CHAT_WS_URL:-ws://localhost:8096/chat/ws}
       OIDC_ISSUER: ${OIDC_ISSUER:-}
