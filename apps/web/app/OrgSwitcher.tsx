@@ -19,6 +19,7 @@ export function OrgSwitcher({
     <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
       <span className="muted">組織</span>
       <select
+        data-testid="org-switcher"
         value={currentOrgId || organizations[0]?.orgId || ""}
         disabled={pending}
         onChange={(e) => {

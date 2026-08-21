@@ -178,7 +178,7 @@ export default async function HomePage({
 
   return (
     <>
-      <section className="hero">
+      <section className="hero" data-testid="workspace-home">
         <h1 className="page-title">ワークスペース</h1>
         <p className="page-lead row">
           <span>
@@ -224,9 +224,9 @@ export default async function HomePage({
 
       <section className="card" style={{ marginBottom: "1.5rem" }}>
         <h2 style={{ marginTop: 0 }}>ワークスペースを作成</h2>
-        <form action={createWorkspaceAction} className="row">
-          <input name="name" placeholder="Team name" required style={{ flex: 1 }} />
-          <button type="submit" className="btn">
+        <form action={createWorkspaceAction} className="row" data-testid="create-workspace-form">
+          <input name="name" placeholder="Team name" required style={{ flex: 1 }} data-testid="workspace-name" />
+          <button type="submit" className="btn" data-testid="create-workspace">
             作成
           </button>
         </form>
