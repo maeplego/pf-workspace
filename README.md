@@ -1,4 +1,4 @@
-# pf-workspace
+﻿# pf-workspace
 
 学習用のチームワークスペースです。カンバン、Wiki、共同編集、チャット、横断検索、スプリントのバーンダウンを一つの製品にまとめています。**Linear / Notion / Slack の置き換えではありません。**
 
@@ -49,3 +49,13 @@ npm run build
 ```
 
 設計の詳細は [portfolio-plan](https://github.com/maeplego/portfolio-plan) の `portfolio-plan/workspace/docs/` です。Kubernetes 連携は [pf-cloud-k8s](https://github.com/maeplego/pf-cloud-k8s) の collab overlay です。
+
+## ライセンスと利用条件
+
+本リポジトリは **デモ・学習・社内評価用** です。現状品質に **保証はありません**。
+
+- 許可: クローン、ローカル実行、学習、非本番の評価
+- 別契約が必要: 本番運用、有償サービスへの組込み、再販・托管の提供
+
+詳細は [LICENSE](./LICENSE) と [licensing.md](https://github.com/maeplego/portfolio-plan/blob/master/portfolio-plan/licensing.md) を参照してください。
+
