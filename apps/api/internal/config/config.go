@@ -7,7 +7,14 @@ import (
 	"strings"
 )
 
+const (
+	EnvDevelopment = "development"
+	EnvStaging     = "staging"
+	EnvProduction  = "production"
+)
+
 type Config struct {
+	Env              string
 	HTTPAddr         string
 	DatabaseURL      string
 	DevAuth          bool
@@ -28,6 +35,7 @@ func FromEnv() (Config, error) {
 	}
 	devAuth := strings.EqualFold(os.Getenv("WORKSPACE_DEV_AUTH"), "true") || os.Getenv("WORKSPACE_DEV_AUTH") == "1"
 	cfg := Config{
+		Env:              normalizeEnv(os.Getenv("WORKSPACE_ENV")),
 		HTTPAddr:         ":" + port,
 		DatabaseURL:      strings.TrimSpace(os.Getenv("WORKSPACE_DATABASE_URL")),
 		DevAuth:          devAuth,
@@ -46,7 +54,29 @@ func FromEnv() (Config, error) {
 	if cfg.OIDCIssuer == "" && !cfg.DevAuth {
 		return cfg, fmt.Errorf("OIDC_ISSUER or WORKSPACE_DEV_AUTH=true is required")
 	}
+	if (cfg.Env == EnvStaging || cfg.Env == EnvProduction) && cfg.DevAuth {
+		return cfg, fmt.Errorf("WORKSPACE_DEV_AUTH must be false when WORKSPACE_ENV=%s", cfg.Env)
+	}
+	if (cfg.Env == EnvStaging || cfg.Env == EnvProduction) && cfg.OIDCIssuer == "" {
+		return cfg, fmt.Errorf("OIDC_ISSUER is required when WORKSPACE_ENV=%s", cfg.Env)
+	}
+	if cfg.Env != EnvDevelopment && cfg.Env != EnvStaging && cfg.Env != EnvProduction {
+		return cfg, fmt.Errorf("unsupported WORKSPACE_ENV %q (use development, staging, or production)", cfg.Env)
+	}
 	return cfg, nil
+}
+
+func normalizeEnv(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "dev", "development", "local", "demo":
+		return EnvDevelopment
+	case "staging", "stage":
+		return EnvStaging
+	case "production", "prod":
+		return EnvProduction
+	default:
+		return strings.ToLower(strings.TrimSpace(v))
+	}
 }
 
 func ParseBoolEnv(key string, def bool) bool {

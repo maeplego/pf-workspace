@@ -27,4 +27,38 @@ func TestFromEnvEmptyDatabaseUsesMemory(t *testing.T) {
 	if cfg.DatabaseURL != "" {
 		t.Fatalf("expected empty database url, got %q", cfg.DatabaseURL)
 	}
+	if cfg.Env != EnvDevelopment {
+		t.Fatalf("env = %q", cfg.Env)
+	}
+}
+
+func TestFromEnvStagingRejectsDevAuth(t *testing.T) {
+	t.Setenv("WORKSPACE_ENV", "staging")
+	t.Setenv("WORKSPACE_DEV_AUTH", "true")
+	t.Setenv("OIDC_ISSUER", "http://idp.example")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("expected error when staging enables WORKSPACE_DEV_AUTH")
+	}
+}
+
+func TestFromEnvProductionRequiresOIDC(t *testing.T) {
+	t.Setenv("WORKSPACE_ENV", "production")
+	t.Setenv("WORKSPACE_DEV_AUTH", "false")
+	_ = os.Unsetenv("OIDC_ISSUER")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("expected error when production lacks OIDC_ISSUER")
+	}
+}
+
+func TestFromEnvStagingOIDC(t *testing.T) {
+	t.Setenv("WORKSPACE_ENV", "staging")
+	t.Setenv("WORKSPACE_DEV_AUTH", "false")
+	t.Setenv("OIDC_ISSUER", "http://idp.example")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Env != EnvStaging || cfg.DevAuth {
+		t.Fatalf("%+v", cfg)
+	}
 }
