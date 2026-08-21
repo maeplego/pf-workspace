@@ -47,7 +47,13 @@ func main() {
 		MediaAPIURL: cfg.MediaAPIURL,
 		UploadDir:   cfg.UploadDir,
 	})
-	mw := auth.New(cfg.DevAuth, cfg.OIDCIssuer, cfg.OIDCInternalBase, cfg.OIDCAudience)
+	mw := auth.NewWithOptions(auth.Options{
+		DevAuth:      cfg.DevAuth,
+		Issuer:       cfg.OIDCIssuer,
+		InternalBase: cfg.OIDCInternalBase,
+		Audience:     cfg.OIDCAudience,
+		Claims:       auth.ParseClaimNames(cfg.OIDCOrgClaim, cfg.OIDCOrgsClaim),
+	})
 	api := web.New(svc, cfg.CORSOrigin, cfg.InternalToken, nil)
 	api.SetRequireOrg(cfg.RequireOrg)
 	handler := api.Routes(mw)

@@ -22,6 +22,8 @@ type Config struct {
 	OIDCIssuer       string
 	OIDCInternalBase string
 	OIDCAudience     string
+	OIDCOrgClaim     string
+	OIDCOrgsClaim    string
 	CORSOrigin       string
 	InternalToken    string
 	MediaAPIURL      string
@@ -52,6 +54,8 @@ func FromEnv() (Config, error) {
 		OIDCIssuer:       strings.TrimSpace(os.Getenv("OIDC_ISSUER")),
 		OIDCInternalBase: strings.TrimSpace(os.Getenv("OIDC_INTERNAL_BASE")),
 		OIDCAudience:     strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),
+		OIDCOrgClaim:     strings.TrimSpace(os.Getenv("OIDC_ORG_CLAIM")),
+		OIDCOrgsClaim:    strings.TrimSpace(os.Getenv("OIDC_ORGS_CLAIM")),
 		CORSOrigin:       strings.TrimSpace(os.Getenv("WORKSPACE_CORS_ORIGIN")),
 		InternalToken:    strings.TrimSpace(os.Getenv("WORKSPACE_INTERNAL_TOKEN")),
 		MediaAPIURL:      strings.TrimSpace(os.Getenv("MEDIA_API_URL")),

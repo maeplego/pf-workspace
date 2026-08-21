@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { readCookie, setOn } from "../../lib/oidc/cookies";
-import { clientId, issuer, oidcEnabled, postLogoutRedirectUri, publicOrigin } from "../../lib/oidc/env";
+import { clearOn, readCookie, setOn } from "../../lib/oidc/cookies";
+import { endSessionEndpoint } from "../../lib/oidc/discovery";
+import { clientId, oidcEnabled, postLogoutRedirectUri, publicOrigin } from "../../lib/oidc/env";
 import { randomString } from "../../lib/oidc/pkce";
 
 export async function POST(req: NextRequest) {
@@ -18,7 +19,16 @@ export async function POST(req: NextRequest) {
   if (idToken) {
     q.set("id_token_hint", idToken);
   }
-  const res = NextResponse.redirect(`${issuer()}/end-session?${q.toString()}`, { status: 303 });
+  const endSession = await endSessionEndpoint();
+  if (!endSession) {
+    const res = NextResponse.redirect(new URL("/logged-out", publicOrigin(req)), { status: 303 });
+    clearOn(res, "rp_access");
+    clearOn(res, "rp_id");
+    clearOn(res, "rp_refresh");
+    clearOn(res, "rp_active_org");
+    return res;
+  }
+  const res = NextResponse.redirect(`${endSession}?${q.toString()}`, { status: 303 });
   setOn(res, "rp_logout_state", state, 600);
   return res;
 }

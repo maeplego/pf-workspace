@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { clearOn, readRequestCookie, setOn } from "../../lib/oidc/cookies";
-import { clientId, internalBase, oidcEnabled, publicOrigin, redirectUri } from "../../lib/oidc/env";
+import { tokenEndpoint } from "../../lib/oidc/discovery";
+import { clientId, oidcEnabled, publicOrigin, redirectUri } from "../../lib/oidc/env";
 import { verifyIdToken } from "../../lib/oidc/idtoken";
 
 export async function GET(req: NextRequest) {
@@ -30,7 +31,12 @@ export async function GET(req: NextRequest) {
     redirect_uri: redirectUri(),
     code_verifier: verifier,
   });
-  const tokenRes = await fetch(`${internalBase()}/token`, {
+  const secret = process.env.OIDC_CLIENT_SECRET?.trim();
+  if (secret) {
+    body.set("client_secret", secret);
+  }
+  const tokenURL = await tokenEndpoint();
+  const tokenRes = await fetch(tokenURL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,

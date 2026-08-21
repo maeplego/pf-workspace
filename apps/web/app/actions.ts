@@ -72,8 +72,10 @@ export async function switchActiveOrg(orgId: string, devUser?: string) {
   }
 
   if (!session.accessToken) throw new Error("unauthorized");
-  const { internalBase, clientId } = await import("../lib/oidc/env");
+  const { clientId } = await import("../lib/oidc/env");
   const { readCookie } = await import("../lib/oidc/cookies");
+  const { tokenEndpoint } = await import("../lib/oidc/discovery");
+  const { internalBase } = await import("../lib/oidc/env");
   const switchRes = await fetch(`${internalBase()}/v1/active-org`, {
     method: "PUT",
     headers: {
@@ -109,7 +111,9 @@ export async function switchActiveOrg(orgId: string, devUser?: string) {
       client_id: clientId(),
       refresh_token: refresh,
     });
-    const tokenRes = await fetch(`${internalBase()}/token`, {
+    const secret = process.env.OIDC_CLIENT_SECRET?.trim();
+    if (secret) body.set("client_secret", secret);
+    const tokenRes = await fetch(await tokenEndpoint(), {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,

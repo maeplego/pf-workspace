@@ -1,5 +1,7 @@
+import { pickOrgId, pickOrganizations } from "./oidc/claims";
 import { readCookie } from "./oidc/cookies";
-import { internalBase, oidcEnabled } from "./oidc/env";
+import { userinfoEndpoint } from "./oidc/discovery";
+import { oidcEnabled } from "./oidc/env";
 
 export type OrgMembership = {
   orgId: string;
@@ -35,36 +37,27 @@ export async function getWorkspaceSession(devUser?: string): Promise<WorkspaceSe
   }
   const access = await readCookie("rp_access");
   if (!access) return null;
-  const res = await fetch(`${internalBase()}/userinfo`, {
+  const userinfo = await userinfoEndpoint();
+  const res = await fetch(userinfo, {
     headers: { Authorization: `Bearer ${access}` },
     cache: "no-store",
   });
   if (!res.ok) return null;
-  const ui = (await res.json()) as {
-    sub?: string;
-    name?: string;
-    email?: string;
-    org_id?: string;
-    organizations?: { org_id?: string; org_name?: string; role?: string }[];
-  };
-  if (!ui.sub) return null;
-  const organizations = (ui.organizations || [])
-    .filter((o) => o.org_id)
-    .map((o) => ({
-      orgId: String(o.org_id),
-      orgName: String(o.org_name || o.org_id),
-      role: String(o.role || "member"),
-    }));
-  // BYO IdP may lack /v1/active-org; cookie picks membership from claim list.
+  const ui = (await res.json()) as Record<string, unknown>;
+  if (typeof ui.sub !== "string" || !ui.sub) return null;
+  const organizations = pickOrganizations(ui);
   const cookieOrg = (await readCookie("rp_active_org")) || "";
   const fromCookie =
     cookieOrg && organizations.some((o) => o.orgId === cookieOrg) ? cookieOrg : "";
-  const fromClaim = ui.org_id ? String(ui.org_id) : organizations[0]?.orgId;
+  const fromClaim = pickOrgId(ui) || organizations[0]?.orgId;
   return {
     sub: ui.sub,
-    email: ui.email ? ui.email.toLowerCase().trim() : undefined,
+    email: typeof ui.email === "string" ? ui.email.toLowerCase().trim() : undefined,
     accessToken: access,
-    displayName: ui.name || ui.email || ui.sub,
+    displayName:
+      (typeof ui.name === "string" && ui.name) ||
+      (typeof ui.email === "string" && ui.email) ||
+      ui.sub,
     orgId: fromCookie || fromClaim,
     organizations,
     devMode: false,
