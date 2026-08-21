@@ -1,4 +1,9 @@
-﻿# pf-workspace
+# pf-workspace
+
+| まず | リンク |
+| --- | --- |
+| 採用の位置づけ | [HIRING.md](https://github.com/maeplego/portfolio-plan/blob/master/portfolio-plan/HIRING.md) |
+| 確認手順 | [REVIEW.md](https://github.com/maeplego/portfolio-plan/blob/master/portfolio-plan/REVIEW.md) |
 
 学習用のチームワークスペースです。カンバン、Wiki、共同編集、チャット、横断検索、スプリントのバーンダウンを一つの製品にまとめています。**Linear / Notion / Slack の置き換えではありません。**
 
