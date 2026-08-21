@@ -55,12 +55,17 @@ export async function getWorkspaceSession(devUser?: string): Promise<WorkspaceSe
       orgName: String(o.org_name || o.org_id),
       role: String(o.role || "member"),
     }));
+  // BYO IdP may lack /v1/active-org; cookie picks membership from claim list.
+  const cookieOrg = (await readCookie("rp_active_org")) || "";
+  const fromCookie =
+    cookieOrg && organizations.some((o) => o.orgId === cookieOrg) ? cookieOrg : "";
+  const fromClaim = ui.org_id ? String(ui.org_id) : organizations[0]?.orgId;
   return {
     sub: ui.sub,
     email: ui.email ? ui.email.toLowerCase().trim() : undefined,
     accessToken: access,
     displayName: ui.name || ui.email || ui.sub,
-    orgId: ui.org_id ? String(ui.org_id) : organizations[0]?.orgId,
+    orgId: fromCookie || fromClaim,
     organizations,
     devMode: false,
   };

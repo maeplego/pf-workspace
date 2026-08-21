@@ -78,9 +78,19 @@ func (m *Middleware) authenticate(r *http.Request) (User, error) {
 		return User{}, fmt.Errorf("oidc not configured")
 	}
 	if u, err := m.authenticateJWT(r.Context(), token); err == nil {
+		if org := strings.TrimSpace(r.Header.Get("X-Workspace-Org")); org != "" {
+			u.OrgID = org
+		}
 		return u, nil
 	}
-	return m.authenticateUserInfo(r.Context(), token)
+	u, err := m.authenticateUserInfo(r.Context(), token)
+	if err != nil {
+		return User{}, err
+	}
+	if org := strings.TrimSpace(r.Header.Get("X-Workspace-Org")); org != "" {
+		u.OrgID = org
+	}
+	return u, nil
 }
 
 func (m *Middleware) authenticateJWT(ctx context.Context, token string) (User, error) {

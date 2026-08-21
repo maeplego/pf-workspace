@@ -18,6 +18,7 @@ type Config struct {
 	HTTPAddr         string
 	DatabaseURL      string
 	DevAuth          bool
+	RequireOrg       bool
 	OIDCIssuer       string
 	OIDCInternalBase string
 	OIDCAudience     string
@@ -34,11 +35,20 @@ func FromEnv() (Config, error) {
 		port = "8096"
 	}
 	devAuth := strings.EqualFold(os.Getenv("WORKSPACE_DEV_AUTH"), "true") || os.Getenv("WORKSPACE_DEV_AUTH") == "1"
+	env := normalizeEnv(os.Getenv("WORKSPACE_ENV"))
+	requireOrg := !devAuth
+	if v := strings.TrimSpace(os.Getenv("WORKSPACE_REQUIRE_ORG")); v != "" {
+		requireOrg = strings.EqualFold(v, "true") || v == "1"
+	}
+	if env == EnvStaging || env == EnvProduction {
+		requireOrg = true
+	}
 	cfg := Config{
-		Env:              normalizeEnv(os.Getenv("WORKSPACE_ENV")),
+		Env:              env,
 		HTTPAddr:         ":" + port,
 		DatabaseURL:      strings.TrimSpace(os.Getenv("WORKSPACE_DATABASE_URL")),
 		DevAuth:          devAuth,
+		RequireOrg:       requireOrg,
 		OIDCIssuer:       strings.TrimSpace(os.Getenv("OIDC_ISSUER")),
 		OIDCInternalBase: strings.TrimSpace(os.Getenv("OIDC_INTERNAL_BASE")),
 		OIDCAudience:     strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),

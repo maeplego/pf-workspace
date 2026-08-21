@@ -18,6 +18,7 @@ type Server struct {
 	corsOrigin    string
 	internalToken string
 	hub           *realtime.Hub
+	requireOrg    bool
 }
 
 func New(svc *service.Service, corsOrigin, internalToken string, hub *realtime.Hub) *Server {
@@ -26,6 +27,10 @@ func New(svc *service.Service, corsOrigin, internalToken string, hub *realtime.H
 	}
 	svc.SetBroadcaster(hub)
 	return &Server{svc: svc, corsOrigin: corsOrigin, internalToken: internalToken, hub: hub}
+}
+
+func (s *Server) SetRequireOrg(v bool) {
+	s.requireOrg = v
 }
 
 func (s *Server) Routes(mw *auth.Middleware) http.Handler {
@@ -57,7 +62,7 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.corsOrigin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", s.corsOrigin)
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Dev-User-Sub")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Dev-User-Sub, X-Dev-User-Org, X-Dev-User-Email, X-Workspace-Org")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
@@ -72,6 +77,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	u, ok := auth.UserFrom(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if s.requireOrg && strings.TrimSpace(u.OrgID) == "" {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "org_required", "message": "org_id claim or tenant required"}})
 		return
 	}
 	r = r.WithContext(withTenantSvc(r.Context(), s.svc.ForOrg(u.OrgID)))

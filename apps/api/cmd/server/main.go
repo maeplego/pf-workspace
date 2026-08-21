@@ -39,13 +39,18 @@ func main() {
 	if pg, ok := st.(*postgres.Store); ok {
 		svc.ConfigureTenant(pg.WithTenant, pg.Unscoped)
 	}
+	if mem, ok := st.(*memory.Store); ok {
+		svc.ConfigureTenant(mem.WithTenant, mem.Unscoped)
+	}
 	svc.SetFileOpts(service.FileOpts{
 		PublicURL:   cfg.PublicURL,
 		MediaAPIURL: cfg.MediaAPIURL,
 		UploadDir:   cfg.UploadDir,
 	})
 	mw := auth.New(cfg.DevAuth, cfg.OIDCIssuer, cfg.OIDCInternalBase, cfg.OIDCAudience)
-	handler := web.New(svc, cfg.CORSOrigin, cfg.InternalToken, nil).Routes(mw)
+	api := web.New(svc, cfg.CORSOrigin, cfg.InternalToken, nil)
+	api.SetRequireOrg(cfg.RequireOrg)
+	handler := api.Routes(mw)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

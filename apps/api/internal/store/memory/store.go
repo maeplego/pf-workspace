@@ -15,6 +15,8 @@ var _ store.Store = (*Store)(nil)
 
 type Store struct {
 	mu           sync.RWMutex
+	orgFilter    string
+	skipTenant   bool
 	workspaces   map[string]domain.Workspace
 	members      map[string]map[string]domain.Member // workspaceID -> sub -> member
 	invitations  map[string]domain.Invitation
@@ -44,6 +46,29 @@ type collabRef struct {
 }
 
 func (s *Store) Ping() error { return nil }
+
+// WithTenant scopes reads/writes to workspaces whose org_id matches (mirrors Postgres RLS).
+func (s *Store) WithTenant(tenantID string) store.Store {
+	cp := *s
+	cp.orgFilter = tenantID
+	cp.skipTenant = false
+	return &cp
+}
+
+// Unscoped disables org filtering (invite token lookup, internal collab).
+func (s *Store) Unscoped() store.Store {
+	cp := *s
+	cp.skipTenant = true
+	cp.orgFilter = ""
+	return &cp
+}
+
+func (s *Store) allowOrg(orgID string) bool {
+	if s.skipTenant || s.orgFilter == "" {
+		return true
+	}
+	return orgID == s.orgFilter
+}
 
 func New() *Store {
 	return &Store{
@@ -100,7 +125,7 @@ func (s *Store) ListWorkspacesForSub(sub string) []domain.Workspace {
 	var out []domain.Workspace
 	for wsID, members := range s.members {
 		if _, ok := members[sub]; ok {
-			if ws, ok := s.workspaces[wsID]; ok {
+			if ws, ok := s.workspaces[wsID]; ok && s.allowOrg(ws.OrgID) {
 				out = append(out, ws)
 			}
 		}
@@ -113,7 +138,7 @@ func (s *Store) GetWorkspace(wsID string) (domain.Workspace, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ws, ok := s.workspaces[wsID]
-	if !ok {
+	if !ok || !s.allowOrg(ws.OrgID) {
 		return domain.Workspace{}, domain.ErrNotFound
 	}
 	return ws, nil

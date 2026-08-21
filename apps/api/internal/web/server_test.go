@@ -21,8 +21,20 @@ func testServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memory.New()
 	svc := service.New(store)
+	svc.ConfigureTenant(store.WithTenant, store.Unscoped)
 	mw := auth.New(true, "", "", "")
 	srv := New(svc, "", "test-internal", nil)
+	return httptest.NewServer(srv.Routes(mw))
+}
+
+func testServerRequireOrg(t *testing.T) *httptest.Server {
+	t.Helper()
+	store := memory.New()
+	svc := service.New(store)
+	svc.ConfigureTenant(store.WithTenant, store.Unscoped)
+	mw := auth.New(true, "", "", "")
+	srv := New(svc, "", "test-internal", nil)
+	srv.SetRequireOrg(true)
 	return httptest.NewServer(srv.Routes(mw))
 }
 
@@ -1868,6 +1880,73 @@ func TestWorkspaceOrgIDFromAuth(t *testing.T) {
 	if ws.OrgID != "org-demo-1" {
 		t.Fatalf("orgId = %q", ws.OrgID)
 	}
+}
+
+func TestOrgTenantIsolationSameSub(t *testing.T) {
+	ts := testServer(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReqDevOrg(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "A Only"}, "same-user", "", "org-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create %d", res.StatusCode)
+	}
+	var ws struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&ws); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	res, err = client.Do(authReqDevOrg(t, http.MethodGet, ts.URL+"/v1/workspaces", nil, "same-user", "", "org-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("list %d", res.StatusCode)
+	}
+	var list struct {
+		Workspaces []struct {
+			ID string `json:"id"`
+		} `json:"workspaces"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	for _, item := range list.Workspaces {
+		if item.ID == ws.ID {
+			t.Fatal("org-a workspace must not appear under org-b for the same sub")
+		}
+	}
+
+	res, err = client.Do(authReqDevOrg(t, http.MethodGet, ts.URL+"/v1/workspaces/"+ws.ID, nil, "same-user", "", "org-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNotFound && res.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-org get want 404/403, got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
+}
+
+func TestRequireOrgRejectsMissingOrg(t *testing.T) {
+	ts := testServerRequireOrg(t)
+	defer ts.Close()
+	client := ts.Client()
+
+	res, err := client.Do(authReq(t, http.MethodPost, ts.URL+"/v1/workspaces", map[string]string{"name": "No Org"}, "owner-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("want 403 without org, got %d", res.StatusCode)
+	}
+	_ = res.Body.Close()
 }
 
 func TestInvitationRevoke(t *testing.T) {

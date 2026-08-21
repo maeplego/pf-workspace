@@ -9,7 +9,12 @@ const API = process.env.WORKSPACE_API_URL || "http://localhost:8096";
 
 function authHeaders(session: WorkspaceSession): Record<string, string> {
   if (session.accessToken) {
-    return { Authorization: `Bearer ${session.accessToken}` };
+    const headers: Record<string, string> = { Authorization: `Bearer ${session.accessToken}` };
+    if (session.orgId) {
+      // BFF passes active tenant; needed when BYO IdP has no /v1/active-org token refresh.
+      headers["X-Workspace-Org"] = session.orgId;
+    }
+    return headers;
   }
   const headers: Record<string, string> = { "X-Dev-User-Sub": session.sub };
   if (session.email) {
@@ -79,7 +84,22 @@ export async function switchActiveOrg(orgId: string, devUser?: string) {
     cache: "no-store",
   });
   if (!switchRes.ok) {
-    throw new Error(await switchRes.text());
+    // AuthPort: bundled P01 exposes active-org; BYO IdPs typically do not.
+    const allowed = (session.organizations || []).some((o) => o.orgId === next);
+    if (!allowed) {
+      throw new Error(await switchRes.text());
+    }
+    const { cookies } = await import("next/headers");
+    const { cookieKey } = await import("../lib/oidc/env");
+    const jar = await cookies();
+    jar.set(cookieKey("rp_active_org"), next, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+    });
+    revalidatePath("/");
+    return;
   }
 
   const refresh = await readCookie("rp_refresh");
@@ -108,6 +128,7 @@ export async function switchActiveOrg(orgId: string, devUser?: string) {
       if (tokens.access_token) jar.set(cookieKey("rp_access"), tokens.access_token, base);
       if (tokens.id_token) jar.set(cookieKey("rp_id"), tokens.id_token, base);
       if (tokens.refresh_token) jar.set(cookieKey("rp_refresh"), tokens.refresh_token, base);
+      jar.set(cookieKey("rp_active_org"), next, base);
     }
   }
   revalidatePath("/");

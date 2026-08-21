@@ -61,4 +61,7 @@ func TestFromEnvStagingOIDC(t *testing.T) {
 	if cfg.Env != EnvStaging || cfg.DevAuth {
 		t.Fatalf("%+v", cfg)
 	}
+	if !cfg.RequireOrg {
+		t.Fatal("staging must require org")
+	}
 }
